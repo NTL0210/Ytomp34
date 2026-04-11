@@ -9,6 +9,8 @@ import type {
 } from '../../shared/types';
 import { logger } from '../services/logger.service';
 import { urlValidator } from '../services/url-validator.service';
+import { ytdlpService } from '../services/ytdlp.service';
+import { downloadService } from '../services/download.service';
 
 /**
  * IPC Handlers for Main Process
@@ -16,6 +18,9 @@ import { urlValidator } from '../services/url-validator.service';
  */
 
 export function registerIPCHandlers(mainWindow: BrowserWindow): void {
+  // Set main window for download service
+  downloadService.setMainWindow(mainWindow);
+
   // URL Validation Handler
   ipcMain.handle(IPC_CHANNELS.CHECK_URL, async (_event, url: string): Promise<ValidationResult> => {
     logger.debug('IPC', 'CHECK_URL called', { url });
@@ -38,38 +43,38 @@ export function registerIPCHandlers(mainWindow: BrowserWindow): void {
 
   // Metadata Fetch Handler
   ipcMain.handle(IPC_CHANNELS.FETCH_METADATA, async (_event, url: string): Promise<VideoMetadata> => {
-    // TODO: Implement in Task 3.1 (YtDlp Service)
     logger.debug('IPC', 'FETCH_METADATA called', { url });
-    return {
-      title: 'Sample Video',
-      thumbnail: '',
-      duration: 0,
-      formats: [],
-    };
+    
+    try {
+      const metadata = await ytdlpService.fetchMetadata(url);
+      logger.info('IPC', 'Metadata fetched successfully', { 
+        url, 
+        title: metadata.title,
+        formats: metadata.formats.length,
+      });
+      return metadata;
+    } catch (error) {
+      logger.error('IPC', 'Metadata fetch failed', { url, error });
+      throw error;
+    }
   });
 
   // Download Video Handler
   ipcMain.handle(IPC_CHANNELS.DOWNLOAD_VIDEO, async (_event, request: DownloadRequest): Promise<void> => {
-    // TODO: Implement in Task 3.3 (Download Service)
     logger.info('IPC', 'DOWNLOAD_VIDEO called', { request });
     
-    // Simulate progress events (will be replaced with actual implementation)
-    setTimeout(() => {
-      mainWindow.webContents.send(IPC_CHANNELS.DOWNLOAD_PROGRESS, {
-        percentage: 50,
-        downloadedBytes: 5000000,
-        totalBytes: 10000000,
-        speed: 1000000,
-        eta: 5,
-        status: 'downloading',
-      });
-    }, 1000);
+    try {
+      await downloadService.startDownload(request);
+    } catch (error) {
+      logger.error('IPC', 'Download failed', { request, error });
+      throw error;
+    }
   });
 
   // Cancel Download Handler
   ipcMain.handle(IPC_CHANNELS.CANCEL_DOWNLOAD, async (): Promise<void> => {
-    // TODO: Implement in Task 4.9 (Download Cancellation)
     logger.info('IPC', 'CANCEL_DOWNLOAD called');
+    await downloadService.cancelDownload();
   });
 
   // Get Settings Handler

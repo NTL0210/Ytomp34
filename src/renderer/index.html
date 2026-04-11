@@ -8,11 +8,112 @@
   <link rel="stylesheet" href="./styles/main.css">
 </head>
 <body>
-  <div id="app">
-    <h1>Electron Video Downloader</h1>
-    <p>Project initialized successfully!</p>
-    <p>Phase 1: Core Infrastructure - Task 1.1 Complete</p>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <h1>Video Downloader</h1>
+      <p class="subtitle">Download videos from YouTube and other platforms</p>
+    </header>
+
+    <!-- Main Content -->
+    <main class="app-main">
+      <!-- URL Input Section -->
+      <section class="url-section">
+        <div class="input-group">
+          <input 
+            type="text" 
+            id="url-input" 
+            class="url-input" 
+            placeholder="Paste video URL here..."
+            autocomplete="off"
+          />
+          <button id="paste-btn" class="btn btn-secondary">
+            <span>📋</span> Paste
+          </button>
+          <button id="check-btn" class="btn btn-primary">
+            <span>🔍</span> Check
+          </button>
+        </div>
+        
+        <!-- Validation Messages -->
+        <div id="validation-messages" class="validation-messages hidden"></div>
+      </section>
+
+      <!-- Metadata Preview Section -->
+      <section id="metadata-section" class="metadata-section hidden">
+        <div class="metadata-card">
+          <div class="metadata-thumbnail">
+            <img id="thumbnail" src="" alt="Video thumbnail" />
+          </div>
+          <div class="metadata-info">
+            <h2 id="video-title" class="video-title">Video Title</h2>
+            <p id="video-duration" class="video-duration">Duration: 0:00</p>
+            
+            <div class="format-selector">
+              <label for="format-select">Select Format:</label>
+              <select id="format-select" class="format-select">
+                <option value="">Loading formats...</option>
+              </select>
+            </div>
+
+            <button id="download-btn" class="btn btn-success btn-large">
+              <span>⬇️</span> Download
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Progress Section -->
+      <section id="progress-section" class="progress-section hidden">
+        <div class="progress-card">
+          <h3>Downloading...</h3>
+          
+          <div class="progress-bar-container">
+            <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+          </div>
+          
+          <div class="progress-info">
+            <span id="progress-percentage">0%</span>
+            <span id="progress-speed">0 MB/s</span>
+            <span id="progress-eta">ETA: --:--</span>
+          </div>
+          
+          <div class="progress-details">
+            <p id="progress-status">Preparing download...</p>
+            <p id="progress-size">0 MB / 0 MB</p>
+          </div>
+
+          <button id="cancel-btn" class="btn btn-danger">
+            <span>❌</span> Cancel
+          </button>
+        </div>
+      </section>
+
+      <!-- Error Section -->
+      <section id="error-section" class="error-section hidden">
+        <div class="error-card">
+          <h3>⚠️ Error</h3>
+          <p id="error-message"></p>
+          <button id="error-close-btn" class="btn btn-secondary">Close</button>
+        </div>
+      </section>
+
+      <!-- Success Section -->
+      <section id="success-section" class="success-section hidden">
+        <div class="success-card">
+          <h3>✅ Download Complete!</h3>
+          <p id="success-message">Your video has been downloaded successfully.</p>
+          <button id="success-close-btn" class="btn btn-primary">OK</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>Electron Video Downloader v1.0.0</p>
+    </footer>
   </div>
+
   <script type="module" src="./main.ts"></script>
 </body>
 </html>

@@ -3,6 +3,8 @@ import { join } from 'path';
 import { registerIPCHandlers, unregisterIPCHandlers } from './ipc/handlers';
 import { logger } from './services/logger.service';
 import { directoryManager } from './services/directory-manager.service';
+import { cacheService } from './services/cache.service';
+import { tempManagerService } from './services/temp-manager.service';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -58,6 +60,13 @@ app.whenReady().then(async () => {
     // Continue anyway - some features may not work but app should still start
   }
   
+  // Initialize temp manager
+  try {
+    await tempManagerService.initialize();
+  } catch (error) {
+    logger.error('App', 'Failed to initialize temp manager', { error });
+  }
+  
   createWindow();
 
   app.on('activate', () => {
@@ -79,6 +88,12 @@ app.on('before-quit', async () => {
   
   // Cleanup IPC handlers before app quits
   unregisterIPCHandlers();
+  
+  // Cleanup temp files
+  await tempManagerService.cleanup();
+  
+  // Flush cache to disk
+  await cacheService.flush();
   
   // Flush all pending logs
   await logger.flush();
