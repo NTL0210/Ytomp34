@@ -1,0 +1,28 @@
+# Icon Placeholder
+
+This is a placeholder for the application icon.
+
+## Requirements
+
+- Format: .ico (Windows Icon)
+- Sizes: 16x16, 32x32, 48x48, 64x64, 128x128, 256x256
+- Recommended tool: https://www.icoconverter.com/
+
+## Instructions
+
+1. Create or design your application icon
+2. Convert to .ico format with multiple sizes
+3. Save as: build/icon.ico
+4. Delete this placeholder file
+
+## Temporary Solution
+
+For development, you can use a simple icon generator or skip this step.
+electron-builder will use a default icon if icon.ico is not found.
+
+## Design Guidelines
+
+- Simple, recognizable design
+- Works well at small sizes (16x16)
+- Represents video downloading concept
+- Professional appearance

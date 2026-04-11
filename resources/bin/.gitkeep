@@ -1,0 +1,2 @@
+# This file keeps the bin directory in git
+# Actual binaries (yt-dlp.exe, ffmpeg.exe) should be downloaded separately
