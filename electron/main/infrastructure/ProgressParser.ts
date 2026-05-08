@@ -57,6 +57,10 @@ export class ProgressParserImpl implements ProgressParser {
     speed: '0 B/s',
     eta: '--:--'
   };
+  
+  // ETA smoothing: keep last 3 ETA values and average them
+  private etaHistory: number[] = [];
+  private readonly ETA_HISTORY_SIZE = 3;
 
   parse(line: string): ProgressData | null {
     // Try each pattern in order
@@ -66,7 +70,30 @@ export class ProgressParserImpl implements ProgressParser {
       if (match) {
         const percentage = parseFloat(match[1]);
         const speed = match[2] ? this.normalizeSpeed(match[2]) : this.lastKnownProgress.speed;
-        const eta = match[3] ? this.normalizeEta(match[3]) : this.lastKnownProgress.eta;
+        const rawEta = match[3] ? match[3].trim() : null;
+        
+        // Smooth ETA if available
+        let eta: string;
+        if (rawEta) {
+          const etaSeconds = this.etaToSeconds(rawEta);
+          if (etaSeconds !== null) {
+            // Add to history
+            this.etaHistory.push(etaSeconds);
+            if (this.etaHistory.length > this.ETA_HISTORY_SIZE) {
+              this.etaHistory.shift(); // Remove oldest
+            }
+            
+            // Calculate average ETA
+            const avgEtaSeconds = Math.round(
+              this.etaHistory.reduce((sum, val) => sum + val, 0) / this.etaHistory.length
+            );
+            eta = this.secondsToEta(avgEtaSeconds);
+          } else {
+            eta = this.normalizeEta(rawEta);
+          }
+        } else {
+          eta = this.lastKnownProgress.eta;
+        }
         
         this.lastKnownProgress = {
           percentage: Math.min(100, Math.max(0, percentage)), // Clamp 0-100
@@ -125,11 +152,41 @@ export class ProgressParserImpl implements ProgressParser {
     // If it's just seconds, convert to MM:SS
     const seconds = parseInt(eta);
     if (!isNaN(seconds)) {
-      const mins = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      return this.secondsToEta(seconds);
     }
     
     return eta;
+  }
+  
+  /**
+   * Convert ETA string (HH:MM:SS or MM:SS) to seconds
+   */
+  private etaToSeconds(eta: string): number | null {
+    const parts = eta.split(':').map(p => parseInt(p));
+    
+    if (parts.length === 3) {
+      // HH:MM:SS
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+      // MM:SS
+      return parts[0] * 60 + parts[1];
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Convert seconds to ETA string (MM:SS or HH:MM:SS)
+   */
+  private secondsToEta(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
   }
 }

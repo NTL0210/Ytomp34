@@ -14,6 +14,9 @@ export type StatusCallback = (taskId: string, status: DownloadStatus) => void;
  * Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 6.4, 10.1, 10.2, 10.3, 10.4, 23.1, 23.2, 23.3, 23.4, 23.5
  */
 export class ExecuteDownloadUseCase {
+  private lastProgressUpdateTime: Map<string, number> = new Map();
+  private readonly PROGRESS_UPDATE_THROTTLE_MS = 2000; // Update UI every 2 seconds
+
   constructor(
     private ytDlpExecutor: YtDlpExecutor,
     private queue: DownloadQueue,
@@ -43,13 +46,31 @@ export class ExecuteDownloadUseCase {
         task.selectedFormat,
         task.selectedQuality,
         task.filePath,
-        // Progress callback
+        // Progress callback with throttling
         (progress: ProgressData) => {
+          // Always update task data (for internal state)
           task.progress = progress.percentage;
           task.speed = progress.speed;
           task.eta = progress.eta;
           task.updatedAt = new Date();
-          this.onProgressUpdate(task.id, progress);
+          
+          // Throttle UI updates to prevent ETA jumping
+          const now = Date.now();
+          const lastUpdate = this.lastProgressUpdateTime.get(task.id) || 0;
+          const timeSinceLastUpdate = now - lastUpdate;
+          
+          // Only send UI update if:
+          // 1. Enough time has passed (2 seconds)
+          // 2. Progress is at 100% (completion)
+          // 3. This is the first update
+          if (
+            timeSinceLastUpdate >= this.PROGRESS_UPDATE_THROTTLE_MS ||
+            progress.percentage >= 100 ||
+            lastUpdate === 0
+          ) {
+            this.lastProgressUpdateTime.set(task.id, now);
+            this.onProgressUpdate(task.id, progress);
+          }
         },
         // Error callback
         (error: string) => {
@@ -76,6 +97,9 @@ export class ExecuteDownloadUseCase {
     task.progress = 100;
     task.updatedAt = new Date();
     this.onStatusChange(task.id, 'completed');
+    
+    // Clean up throttle tracking
+    this.lastProgressUpdateTime.delete(task.id);
 
     this.logger.info('Download completed', { taskId: task.id, filePath: task.filePath });
 
@@ -86,6 +110,9 @@ export class ExecuteDownloadUseCase {
   private handleDownloadError(task: DownloadTask, error: string): void {
     task.errorMessage = error;
     task.updatedAt = new Date();
+    
+    // Clean up throttle tracking
+    this.lastProgressUpdateTime.delete(task.id);
 
     this.logger.error('Download error occurred', undefined, {
       taskId: task.id,
