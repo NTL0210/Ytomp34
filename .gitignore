@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+build/
+tmp-build/
+app-temp/
+app-extracted/
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test files
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+
+# User data (will be created at runtime)
+userData/
+
+# Kiro internal (optional - keep specs but exclude internal state)
+.kiro/.meta.json
+.kiro/steering/
+.kiro/skills/
+
+# PowerShell test scripts (optional - you may want to keep these)
+# test-*.ps1
+# debug-*.ps1
+# final-*.ps1
