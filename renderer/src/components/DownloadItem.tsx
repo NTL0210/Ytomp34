@@ -144,8 +144,12 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
         <div className="mb-2">
           <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
             <div
-              className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-300"
-              style={{ width: `${task.progress}%` }}
+              className={`h-full transition-all duration-300 ease-out ${
+                task.status === 'downloading' 
+                  ? 'bg-blue-600 dark:bg-blue-500' 
+                  : 'bg-yellow-600 dark:bg-yellow-500'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, task.progress || 0))}%` }}
             />
           </div>
         </div>
@@ -154,9 +158,24 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
       {/* Progress details */}
       {task.status === 'downloading' && (
         <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-          <span>{task.progress.toFixed(1)}%</span>
-          <span>{task.speed}</span>
-          <span>ETA: {task.eta}</span>
+          <span className="font-medium">{(task.progress || 0).toFixed(1)}%</span>
+          <span className="font-mono">{task.speed || 'Calculating...'}</span>
+          <span>ETA: {task.eta || 'Calculating...'}</span>
+        </div>
+      )}
+
+      {/* Paused state details */}
+      {task.status === 'paused' && (
+        <div className="flex items-center justify-between text-xs text-yellow-600 dark:text-yellow-400">
+          <span className="font-medium">{(task.progress || 0).toFixed(1)}% (Paused)</span>
+          <span>Click resume to continue</span>
+        </div>
+      )}
+
+      {/* Pending state details */}
+      {task.status === 'pending' && (
+        <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+          <span>Waiting in queue...</span>
         </div>
       )}
 

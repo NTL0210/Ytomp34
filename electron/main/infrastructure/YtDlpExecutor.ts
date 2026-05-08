@@ -390,39 +390,67 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
           if (line.trim()) {
             console.log('yt-dlp stdout:', line);
             
-            // Try to parse progress - multiple patterns for different scenarios
-            let progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+[\d.]+\w+\s+at\s+([\d.]+\w+\/s)\s+ETA\s+([\d:]+)/);
+            // Try comprehensive progress parsing with multiple patterns
+            let progressMatch = null;
+            
+            // Pattern 1: Full format with ETA
+            progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*[\d.]+\s*\w+\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/i);
             
             if (!progressMatch) {
-              // Alternative progress pattern
-              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%/);
-              if (progressMatch) {
-                const progress: ProgressData = {
-                  percentage: parseFloat(progressMatch[1]),
-                  speed: 'Unknown',
-                  eta: 'Unknown'
-                };
-                onProgress(progress);
-                lastProgressTime = Date.now();
-              }
-            } else {
+              // Pattern 2: Without size
+              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/i);
+            }
+            
+            if (!progressMatch) {
+              // Pattern 3: With speed only
+              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*[\d.]+\s*\w+\s+at\s+([\d.]+\s*\w+\/s)/i);
+            }
+            
+            if (!progressMatch) {
+              // Pattern 4: Percentage and speed
+              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+at\s+([\d.]+\s*\w+\/s)/i);
+            }
+            
+            if (!progressMatch) {
+              // Pattern 5: Percentage only
+              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%/i);
+            }
+            
+            if (progressMatch) {
+              const percentage = parseFloat(progressMatch[1]);
+              const speed = progressMatch[2] ? progressMatch[2].trim().replace(/\s+/g, '') : 'Calculating...';
+              const eta = progressMatch[3] ? progressMatch[3].trim() : 'Calculating...';
+              
               const progress: ProgressData = {
-                percentage: parseFloat(progressMatch[1]),
-                speed: progressMatch[2],
-                eta: progressMatch[3]
+                percentage: Math.min(100, Math.max(0, percentage)), // Clamp 0-100
+                speed: speed.endsWith('/s') ? speed : speed + '/s',
+                eta
               };
+              
               onProgress(progress);
               lastProgressTime = Date.now();
             }
             
-            // Check for conversion progress (for MP3)
-            if (line.includes('[ffmpeg]') && line.includes('Converting')) {
-              console.log('Conversion in progress:', line);
+            // Check for conversion/post-processing progress
+            if (line.includes('[ffmpeg]') || line.includes('Merging') || line.includes('Converting')) {
+              console.log('Post-processing in progress:', line);
               onProgress({
                 percentage: 99,
-                speed: 'Converting...',
+                speed: 'Processing...',
                 eta: 'Almost done'
               });
+              lastProgressTime = Date.now();
+            }
+            
+            // Check for "Destination" line (download complete, starting post-process)
+            if (line.includes('[download]') && line.includes('Destination:')) {
+              console.log('Download complete, post-processing...');
+              onProgress({
+                percentage: 100,
+                speed: 'Complete',
+                eta: '00:00'
+              });
+              lastProgressTime = Date.now();
             }
           }
         }
