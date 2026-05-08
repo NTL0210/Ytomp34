@@ -344,19 +344,29 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         }
       } else {
         // For MP4: Download video with audio
+        // CRITICAL: Use proper format selector to get best video + best audio and merge
+        // YouTube separates video and audio for high quality (>720p)
+        
         if (quality && quality !== 'best') {
-          // Use specific quality format with fallbacks
+          // Download best video at specified height + best audio, then merge
           const heightLimit = quality.replace('p', '');
-          args.push('-f', `best[height<=${heightLimit}][ext=mp4]/best[height<=${heightLimit}]/best[ext=mp4]/best`);
+          
+          // Format selector explanation:
+          // bestvideo[height<=1080][ext=mp4] - Best MP4 video at or below specified height
+          // bestvideo[height<=1080] - Fallback to any codec at specified height
+          // bestaudio[ext=m4a] - Best M4A audio (compatible with MP4)
+          // bestaudio - Fallback to any audio codec
+          args.push('-f', `bestvideo[height<=${heightLimit}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`);
         } else {
-          // Use best available format with MP4 preference
-          args.push('-f', 'best[ext=mp4]/best');
+          // Download best video + best audio and merge
+          // This ensures we get the highest quality video and audio separately, then merge
+          args.push('-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best');
         }
         
-        // Ensure we get both video and audio
+        // Merge video and audio into MP4 container
         args.push('--merge-output-format', 'mp4');
         
-        // Add ffmpeg location for potential merging
+        // Add ffmpeg location for merging (REQUIRED for separate video+audio streams)
         if (this.ffmpegLocation) {
           args.push('--ffmpeg-location', this.ffmpegLocation);
         }
@@ -562,42 +572,105 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
 
   private extractFormats(formats: any[]): any[] {
     // Extract MP4 and MP3 formats with qualities
-    const mp4Formats: any[] = [];
-    const mp3Formats: any[] = [];
+    // For MP4: We need to identify video formats that can be merged with audio
+    // YouTube typically has separate video and audio streams for high quality
+    
+    const videoFormats: Map<number, any> = new Map(); // height -> format
+    const audioFormats: any[] = [];
     
     formats.forEach(f => {
-      if (f.vcodec && f.vcodec !== 'none') {
-        // Video format
-        mp4Formats.push({
-          label: f.format_note || f.height ? `${f.height}p` : 'Unknown',
-          value: f.format_id,
-          resolution: f.height ? `${f.height}p` : undefined
-        });
-      } else if (f.acodec && f.acodec !== 'none') {
-        // Audio format
-        mp3Formats.push({
-          label: f.abr ? `${f.abr}kbps` : 'Unknown',
-          value: f.format_id,
-          bitrate: f.abr
+      // Video formats (has video codec, may or may not have audio)
+      if (f.vcodec && f.vcodec !== 'none' && f.height) {
+        // Store best format for each height
+        const existing = videoFormats.get(f.height);
+        if (!existing || (f.tbr && existing.tbr && f.tbr > existing.tbr)) {
+          videoFormats.set(f.height, {
+            height: f.height,
+            format_id: f.format_id,
+            ext: f.ext,
+            tbr: f.tbr, // total bitrate
+            vcodec: f.vcodec,
+            acodec: f.acodec,
+            format_note: f.format_note
+          });
+        }
+      }
+      
+      // Audio-only formats
+      if (f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')) {
+        audioFormats.push({
+          format_id: f.format_id,
+          abr: f.abr, // audio bitrate
+          ext: f.ext,
+          acodec: f.acodec
         });
       }
     });
     
     const result = [];
     
-    if (mp4Formats.length > 0) {
+    // Build MP4 quality options from video formats
+    if (videoFormats.size > 0) {
+      // Sort by height descending (highest quality first)
+      const sortedHeights = Array.from(videoFormats.keys()).sort((a, b) => b - a);
+      
+      const mp4Qualities = sortedHeights.map(height => {
+        const format = videoFormats.get(height)!;
+        return {
+          label: `${height}p`,
+          value: `${height}p`, // Use height as value (e.g., "1080p")
+          resolution: `${height}p`,
+          format_id: format.format_id
+        };
+      });
+      
+      // Add "best" option at the top
+      mp4Qualities.unshift({
+        label: 'Best Quality',
+        value: 'best',
+        resolution: 'best',
+        format_id: undefined
+      });
+      
       result.push({
         type: 'mp4',
-        qualities: mp4Formats
+        qualities: mp4Qualities
       });
     }
     
-    if (mp3Formats.length > 0) {
+    // Build MP3 quality options from audio formats
+    if (audioFormats.length > 0) {
+      // Sort by bitrate descending (highest quality first)
+      const sortedAudio = audioFormats
+        .filter(f => f.abr) // Only include formats with known bitrate
+        .sort((a, b) => (b.abr || 0) - (a.abr || 0));
+      
+      const mp3Qualities = sortedAudio.slice(0, 5).map(format => ({
+        label: `${Math.round(format.abr)}kbps`,
+        value: format.format_id,
+        bitrate: format.abr
+      }));
+      
+      // Add "best" option if we have audio formats
+      if (mp3Qualities.length > 0) {
+        mp3Qualities.unshift({
+          label: 'Best Quality',
+          value: 'best',
+          bitrate: undefined
+        });
+      }
+      
       result.push({
         type: 'mp3',
-        qualities: mp3Formats
+        qualities: mp3Qualities
       });
     }
+    
+    console.log('Extracted formats:', {
+      videoFormatsCount: videoFormats.size,
+      audioFormatsCount: audioFormats.length,
+      result
+    });
     
     return result;
   }
