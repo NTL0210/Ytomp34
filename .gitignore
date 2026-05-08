@@ -38,6 +38,16 @@ userData/
 # Kiro internal (IDE-specific, not needed in repository)
 .kiro/
 
+# Development test scripts
+test-*.ps1
+debug-*.ps1
+final-*.ps1
+
+# Development reports
+*-SUMMARY.md
+*-REPORT.md
+!ANTI-BOT-FIXES-SUMMARY.md
+
 # PowerShell test scripts (optional - you may want to keep these)
 # test-*.ps1
 # debug-*.ps1
