@@ -5,6 +5,46 @@ All notable changes to Ytomp34 will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-03
+
+### Added
+- Batch URL analysis and queue import for up to 20 videos at a time
+- Playlist preview and selective import for up to 100 entries
+- Download history with open file, show in folder, retry, download again, and
+  non-destructive history cleanup actions
+- Windows `Setup.exe` packaging with Squirrel update artifacts
+- Manual in-app update flow with separate check, download, and install actions
+- Automated Windows GitHub Release workflow with version validation and
+  SHA-256 checksums
+
+### Changed
+- Updated Electron from 28.3.3 to 42.7.1 and documented Node.js 22 as the
+  supported development runtime
+- Centralized packaged application version and Windows metadata in
+  `package.json`
+- Made yt-dlp installation and updates atomic to preserve a working executable
+  when a download or verification step fails
+- Improved queue persistence and history recovery across application restarts
+
+### Fixed
+- Correct MP3 format selection and conversion arguments
+- Prevented playlist URLs from unintentionally expanding inside individual
+  download tasks
+- Added bounded metadata concurrency and playlist sizes to avoid resource spikes
+- Removed insecure TLS certificate bypasses from yt-dlp operations
+
+### Security
+- Update checks use fixed HTTPS GitHub endpoints without cookies or login tokens
+- Automatic updates are disabled for development and portable builds
+- Update installation is blocked while downloads are active
+- File and folder actions resolve trusted task IDs instead of renderer-provided
+  filesystem paths
+
+### Testing
+- 75 unit and integration tests passing
+- Production TypeScript build, ESLint, Electron preload smoke test, and Windows
+  installer build verified
+
 ## [1.0.0] - 2024-03-17
 
 ### Added
@@ -131,18 +171,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Planned Features
 - [ ] macOS and Linux support
-- [ ] Playlist download support
-- [ ] Subtitle download
+- [x] Playlist download support
 - [ ] Video preview before download
-- [ ] Download history
-- [ ] Batch URL import
+- [x] Download history
+- [x] Batch URL import
 - [ ] Custom format selection
 - [ ] Proxy support
 - [ ] Download scheduling
 - [ ] Bandwidth limiting
 
 ### Potential Improvements
-- [ ] Electron auto-updater integration
+- [x] Electron auto-updater integration
 - [ ] Cloud storage integration
 - [ ] Browser extension
 - [ ] Mobile app version
