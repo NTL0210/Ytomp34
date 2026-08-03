@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { DownloadQueue } from '../domain/entities';
 import { YtDlpExecutor, Logger, QueuePersistence } from '../infrastructure';
+import type { ExecuteDownloadUseCase } from './ExecuteDownloadUseCase';
 
 /**
  * Queue operation request/response contracts
@@ -32,6 +33,19 @@ export interface CancelDownloadResponse {
   error?: string;
 }
 
+export interface TaskActionRequest {
+  taskId: string;
+}
+
+export interface TaskActionResponse {
+  success: boolean;
+  error?: string;
+}
+
+export interface ClearCompletedResponse extends TaskActionResponse {
+  removedCount: number;
+}
+
 /**
  * ManageQueueUseCase
  * FIFO processing, enforces concurrent limit, pause/resume/cancel operations, persists queue every 5s
@@ -39,7 +53,7 @@ export interface CancelDownloadResponse {
  */
 export class ManageQueueUseCase {
   private persistenceInterval?: NodeJS.Timeout;
-  private executeDownloadUseCase?: any; // Will be set by dependency injection
+  private executeDownloadUseCase?: ExecuteDownloadUseCase;
 
   constructor(
     private queue: DownloadQueue,
@@ -54,7 +68,7 @@ export class ManageQueueUseCase {
   /**
    * Set the ExecuteDownloadUseCase (called after construction to avoid circular dependency)
    */
-  setExecuteDownloadUseCase(executeDownloadUseCase: any): void {
+  setExecuteDownloadUseCase(executeDownloadUseCase: ExecuteDownloadUseCase): void {
     this.executeDownloadUseCase = executeDownloadUseCase;
   }
 
@@ -103,6 +117,53 @@ export class ManageQueueUseCase {
    */
   async cancelDownload(request: CancelDownloadRequest): Promise<CancelDownloadResponse> {
     return this.cancel(request);
+  }
+
+  async retryDownload(request: TaskActionRequest): Promise<TaskActionResponse> {
+    const task = this.queue.tasks.find(item => item.id === request.taskId);
+    if (!task) return { success: false, error: 'Task not found' };
+    if (task.status !== 'error') return { success: false, error: 'Only failed downloads can be retried' };
+
+    task.status = 'pending';
+    task.progress = 0;
+    task.speed = '0 B/s';
+    task.eta = '--:--:--';
+    task.retryCount = 0;
+    task.errorMessage = undefined;
+    task.processId = undefined;
+    task.updatedAt = new Date();
+    await this.persistQueue();
+    this.logger.info('Failed download queued for manual retry', { taskId: task.id });
+    return { success: true };
+  }
+
+  /** Remove a history record without deleting the downloaded file. */
+  async removeHistoryTask(request: TaskActionRequest): Promise<TaskActionResponse> {
+    const task = this.queue.tasks.find(item => item.id === request.taskId);
+    if (!task) return { success: false, error: 'Task not found' };
+    if (task.status !== 'completed') {
+      return { success: false, error: 'Only completed downloads can be removed from history' };
+    }
+
+    this.queue.removeTask(task.id);
+    await this.persistQueue();
+    this.logger.info('Completed download removed from history', { taskId: task.id });
+    return { success: true };
+  }
+
+  /** Clear completed history records without touching downloaded files. */
+  async clearCompleted(): Promise<ClearCompletedResponse> {
+    const completedIds = new Set(
+      this.queue.tasks.filter(task => task.status === 'completed').map(task => task.id)
+    );
+
+    if (completedIds.size > 0) {
+      this.queue.tasks = this.queue.tasks.filter(task => !completedIds.has(task.id));
+      await this.persistQueue();
+    }
+
+    this.logger.info('Completed download history cleared', { removedCount: completedIds.size });
+    return { success: true, removedCount: completedIds.size };
   }
 
   /**
@@ -281,6 +342,15 @@ export class ManageQueueUseCase {
         this.logger.error('Failed to persist queue', error as Error);
       }
     }, 5000); // 5 seconds
+  }
+
+  private async persistQueue(): Promise<void> {
+    try {
+      await this.queuePersistence.save(this.queue);
+    } catch (error) {
+      this.logger.error('Failed to persist queue change', error as Error);
+      throw error;
+    }
   }
 
   /**

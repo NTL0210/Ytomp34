@@ -11,13 +11,14 @@ import { FileLogger } from '../../electron/main/infrastructure/Logger';
 // Mock electron app module
 jest.mock('electron', () => ({
   app: {
-    getPath: jest.fn(() => '/tmp/test-app-data')
+    getPath: jest.fn(() => `${process.cwd()}/.test-tmp/logger-app-data`)
   }
 }));
 
 describe('Logger', () => {
   let logger: FileLogger;
-  const testLogDir = '/tmp/test-app-data/logs';
+  const testAppDataDir = path.join(process.cwd(), '.test-tmp', 'logger-app-data');
+  const testLogDir = path.join(testAppDataDir, 'logs');
   const testLogFile = path.join(testLogDir, 'app.log');
 
   beforeEach(() => {
@@ -33,6 +34,12 @@ describe('Logger', () => {
     // Clean up test directory
     if (fs.existsSync(testLogDir)) {
       fs.rmSync(testLogDir, { recursive: true, force: true });
+    }
+  });
+
+  afterAll(() => {
+    if (fs.existsSync(testAppDataDir)) {
+      fs.rmSync(testAppDataDir, { recursive: true, force: true });
     }
   });
 

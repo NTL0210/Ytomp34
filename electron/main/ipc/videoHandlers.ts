@@ -5,10 +5,12 @@
  */
 
 import { ipcMain, IpcMainInvokeEvent } from 'electron';
-import { FetchVideoInfoUseCase } from '../application';
+import { FetchPlaylistInfoUseCase, FetchVideoInfoUseCase } from '../application';
 import { Logger } from '../infrastructure';
 import {
   IPC_CHANNELS,
+  FetchPlaylistInfoRequest,
+  FetchPlaylistInfoResponse,
   FetchVideoInfoRequest,
   FetchVideoInfoResponse
 } from './contracts';
@@ -16,6 +18,7 @@ import {
 export class VideoHandlers {
   constructor(
     private fetchVideoInfoUseCase: FetchVideoInfoUseCase,
+    private fetchPlaylistInfoUseCase: FetchPlaylistInfoUseCase,
     private logger: Logger
   ) {}
 
@@ -28,7 +31,37 @@ export class VideoHandlers {
       this.handleFetchVideoInfo.bind(this)
     );
 
+    ipcMain.handle(
+      IPC_CHANNELS.VIDEO_FETCH_PLAYLIST,
+      this.handleFetchPlaylistInfo.bind(this)
+    );
+
     this.logger.info('Video IPC handlers registered');
+  }
+
+  private async handleFetchPlaylistInfo(
+    event: IpcMainInvokeEvent,
+    request: unknown
+  ): Promise<FetchPlaylistInfoResponse> {
+    try {
+      if (!this.isValidFetchVideoInfoRequest(request)) {
+        return {
+          success: false,
+          error: { type: 'invalid_url', message: 'Invalid playlist URL' }
+        };
+      }
+
+      return await this.fetchPlaylistInfoUseCase.execute(request as FetchPlaylistInfoRequest);
+    } catch (error) {
+      this.logger.error('Error handling playlist preview', error as Error);
+      return {
+        success: false,
+        error: {
+          type: 'unknown',
+          message: error instanceof Error ? error.message : 'Unknown error occurred'
+        }
+      };
+    }
   }
 
   /**

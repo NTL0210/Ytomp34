@@ -47,7 +47,7 @@ export class CreateDownloadTaskUseCase {
       const extension = request.format === 'mp4' ? '.mp4' : '.mp3';
 
       // Ensure unique filename
-      const uniqueFilename = this.fileSanitizer.ensureUnique(
+      const uniqueFilename = this.ensureUniqueAcrossQueue(
         settings.downloadDirectory,
         sanitizedTitle,
         extension
@@ -99,5 +99,26 @@ export class CreateDownloadTaskUseCase {
 
   private generateId(): string {
     return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Disk checks alone are not enough when several tasks with the same title
+   * are queued before any of them creates its output file.
+   */
+  private ensureUniqueAcrossQueue(directory: string, filename: string, extension: string): string {
+    for (let counter = 0; counter <= this.queue.tasks.length; counter += 1) {
+      const candidateBase = counter === 0 ? filename : `${filename} (${counter})`;
+      const candidate = this.fileSanitizer.ensureUnique(directory, candidateBase, extension);
+      const candidatePath = path.resolve(directory, candidate).toLowerCase();
+      const alreadyQueued = this.queue.tasks.some(task =>
+        path.resolve(task.filePath).toLowerCase() === candidatePath
+      );
+
+      if (!alreadyQueued) {
+        return candidate;
+      }
+    }
+
+    throw new Error('Could not allocate a unique output filename');
   }
 }

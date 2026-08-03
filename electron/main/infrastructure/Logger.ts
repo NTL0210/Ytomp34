@@ -9,9 +9,9 @@ export type LogLevel = 'info' | 'error' | 'debug';
  * Provides structured logging with file rotation
  */
 export interface Logger {
-  info(message: string, meta?: Record<string, any>): void;
-  error(message: string, error?: Error, meta?: Record<string, any>): void;
-  debug(message: string, meta?: Record<string, any>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, error?: Error, meta?: Record<string, unknown>): void;
+  debug(message: string, meta?: Record<string, unknown>): void;
 }
 
 /**
@@ -42,11 +42,11 @@ export class FileLogger implements Logger {
     this.rotateIfNeeded();
   }
 
-  info(message: string, meta?: Record<string, any>): void {
+  info(message: string, meta?: Record<string, unknown>): void {
     this.log('info', message, meta);
   }
 
-  error(message: string, error?: Error, meta?: Record<string, any>): void {
+  error(message: string, error?: Error, meta?: Record<string, unknown>): void {
     const errorMeta = error ? {
       ...meta,
       error: {
@@ -58,11 +58,11 @@ export class FileLogger implements Logger {
     this.log('error', message, errorMeta);
   }
 
-  debug(message: string, meta?: Record<string, any>): void {
+  debug(message: string, meta?: Record<string, unknown>): void {
     this.log('debug', message, meta);
   }
 
-  private log(level: LogLevel, message: string, meta?: Record<string, any>): void {
+  private log(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
     const timestamp = new Date().toISOString();
     const logEntry = {
       timestamp,

@@ -10,11 +10,9 @@ import { SettingsStore, Logger } from '../infrastructure';
 import * as fs from 'fs';
 import {
   IPC_CHANNELS,
-  GetSettingsRequest,
   GetSettingsResponse,
   UpdateSettingsRequest,
   UpdateSettingsResponse,
-  SelectFolderRequest,
   SelectFolderResponse
 } from './contracts';
 
@@ -50,10 +48,7 @@ export class SettingsHandlers {
   /**
    * Handle settings:get IPC call
    */
-  private async handleGetSettings(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<GetSettingsResponse> {
+  private async handleGetSettings(): Promise<GetSettingsResponse> {
     try {
       this.logger.info('Getting settings');
 
@@ -79,6 +74,7 @@ export class SettingsHandlers {
     event: IpcMainInvokeEvent,
     request: unknown
   ): Promise<UpdateSettingsResponse> {
+    void event;
     try {
       // Validate request structure
       if (!this.isValidUpdateSettingsRequest(request)) {
@@ -108,10 +104,7 @@ export class SettingsHandlers {
    * Handle settings:select-folder IPC call
    * Opens native folder dialog and verifies write permissions
    */
-  private async handleSelectFolder(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<SelectFolderResponse> {
+  private async handleSelectFolder(): Promise<SelectFolderResponse> {
     try {
       this.logger.info('Opening folder selection dialog');
 

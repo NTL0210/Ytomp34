@@ -1,0 +1,89 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Verify, build, and publish
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $packageVersion = node -p "require('./package.json').version"
+          $expectedTag = "v$packageVersion"
+          if ($packageVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Package version $packageVersion is not a stable semantic version"
+          }
+          if ($env:GITHUB_REF_NAME -cne $expectedTag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $packageVersion"
+          }
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test -- --runInBand
+
+      - name: Build Windows installer
+        run: npm run build:installer
+
+      - name: Verify Electron preload
+        run: npm run test:electron-smoke
+
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $artifacts = Get-ChildItem -LiteralPath 'build/installer' -File |
+            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+            Sort-Object Name
+          $checksums = $artifacts | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          $checksums | Set-Content -LiteralPath 'build/installer/SHA256SUMS.txt' -Encoding utf8
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $packageVersion = node -p "require('./package.json').version"
+          $releaseFiles = @(
+            (Get-ChildItem -LiteralPath 'build/installer' -Filter 'Ytomp34-*-Setup.exe' -File).FullName
+            (Get-ChildItem -LiteralPath 'build/installer' -Filter 'ytomp34-*-full.nupkg' -File).FullName
+            (Resolve-Path -LiteralPath 'build/installer/RELEASES').Path
+            (Resolve-Path -LiteralPath 'build/installer/SHA256SUMS.txt').Path
+          )
+          if ($releaseFiles.Count -ne 4 -or $releaseFiles -contains $null) {
+            throw 'Expected release artifacts were not found'
+          }
+          gh release create $env:GITHUB_REF_NAME @releaseFiles --verify-tag --generate-notes --title "Ytomp34 $packageVersion"

@@ -7,7 +7,18 @@
  */
 
 import React from 'react';
-import { Pause, Play, X, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  ExternalLink,
+  FolderOpen,
+  Pause,
+  Play,
+  RotateCcw,
+  Trash2,
+  X
+} from 'lucide-react';
 import { useIPC } from '../hooks/useIPC';
 
 interface DownloadTask {
@@ -33,7 +44,17 @@ interface DownloadItemProps {
 }
 
 export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
-  const { pauseDownload, resumeDownload, cancelDownload } = useIPC();
+  const {
+    pauseDownload,
+    resumeDownload,
+    cancelDownload,
+    retryDownload,
+    openDownloadedFile,
+    showDownloadedFile,
+    removeHistoryItem,
+    startDownload
+  } = useIPC();
+  const supportsPause = window.electronAPI.platform !== 'win32';
 
   const handlePause = () => {
     pauseDownload(task.id);
@@ -45,6 +66,10 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
 
   const handleCancel = () => {
     cancelDownload(task.id);
+  };
+
+  const handleDownloadAgain = () => {
+    startDownload(task.url, task.videoTitle, task.selectedFormat, task.selectedQuality);
   };
 
   // Get status icon and color
@@ -107,7 +132,55 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
 
         {/* Action buttons */}
         <div className="flex gap-1">
-          {task.status === 'downloading' && (
+          {task.status === 'completed' && (
+            <>
+              <button
+                onClick={() => openDownloadedFile(task.id)}
+                className="p-2 rounded-lg bg-green-100 dark:bg-green-900/20 hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors"
+                aria-label="Open downloaded file"
+                title="Open file"
+              >
+                <ExternalLink className="w-4 h-4 text-green-700 dark:text-green-400" />
+              </button>
+              <button
+                onClick={() => showDownloadedFile(task.id)}
+                className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                aria-label="Show downloaded file in folder"
+                title="Show in folder"
+              >
+                <FolderOpen className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+              </button>
+              <button
+                onClick={handleDownloadAgain}
+                className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
+                aria-label="Download again"
+                title="Download again"
+              >
+                <RotateCcw className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+              </button>
+              <button
+                onClick={() => removeHistoryItem(task.id)}
+                className="p-2 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors"
+                aria-label="Remove from history"
+                title="Remove from history (keeps the file)"
+              >
+                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+              </button>
+            </>
+          )}
+
+          {task.status === 'error' && (
+            <button
+              onClick={() => retryDownload(task.id)}
+              className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
+              aria-label="Retry failed download"
+              title="Retry"
+            >
+              <RotateCcw className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+            </button>
+          )}
+
+          {supportsPause && task.status === 'downloading' && (
             <button
               onClick={handlePause}
               className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
@@ -117,7 +190,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
             </button>
           )}
           
-          {task.status === 'paused' && (
+          {supportsPause && task.status === 'paused' && (
             <button
               onClick={handleResume}
               className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
@@ -127,7 +200,7 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
             </button>
           )}
           
-          {(task.status === 'downloading' || task.status === 'paused' || task.status === 'pending') && (
+          {(task.status === 'downloading' || task.status === 'paused' || task.status === 'pending' || task.status === 'error') && (
             <button
               onClick={handleCancel}
               className="p-2 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors"

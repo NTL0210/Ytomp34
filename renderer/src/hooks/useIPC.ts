@@ -130,16 +130,62 @@ export const useIPC = () => {
     }
   };
 
+  const runTaskAction = async (
+    action: () => Promise<{ success: boolean; error?: string }>,
+    fallbackMessage: string
+  ) => {
+    try {
+      const response = await action();
+      if (!response.success) {
+        setError({ type: 'unknown', message: response.error || fallbackMessage });
+      }
+      return response.success;
+    } catch {
+      setError({ type: 'unknown', message: fallbackMessage });
+      return false;
+    }
+  };
+
+  const retryDownload = (taskId: string) => runTaskAction(
+    () => window.electronAPI.retryDownload(taskId),
+    'Failed to retry download'
+  );
+
+  const openDownloadedFile = (taskId: string) => runTaskAction(
+    () => window.electronAPI.openDownloadedFile(taskId),
+    'Failed to open downloaded file'
+  );
+
+  const showDownloadedFile = (taskId: string) => runTaskAction(
+    () => window.electronAPI.showDownloadedFile(taskId),
+    'Failed to show downloaded file'
+  );
+
+  const removeHistoryItem = (taskId: string) => runTaskAction(
+    () => window.electronAPI.removeHistoryItem(taskId),
+    'Failed to remove history item'
+  );
+
+  const clearCompleted = async () => {
+    try {
+      const response = await window.electronAPI.clearCompleted();
+      if (!response.success) {
+        setError({ type: 'unknown', message: response.error || 'Failed to clear history' });
+      }
+      return response;
+    } catch {
+      setError({ type: 'unknown', message: 'Failed to clear history' });
+      return { success: false, removedCount: 0 };
+    }
+  };
+
   // Get settings
   const getSettings = useCallback(async () => {
     try {
-      console.log('Calling electronAPI.getSettings()...');
       const response = await window.electronAPI.getSettings();
-      console.log('getSettings response:', response);
       
       if (response.success && response.data) {
         setSettings(response.data);
-        console.log('Settings set successfully:', response.data);
         // Don't set error here - let App.tsx handle it
       } else {
         console.error('getSettings failed:', response);
@@ -189,6 +235,11 @@ export const useIPC = () => {
     pauseDownload,
     resumeDownload,
     cancelDownload,
+    retryDownload,
+    openDownloadedFile,
+    showDownloadedFile,
+    removeHistoryItem,
+    clearCompleted,
     getSettings,
     updateSettings,
     selectFolder,

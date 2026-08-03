@@ -10,6 +10,7 @@ import { useAppStore } from './store/useAppStore';
 import { useIPC } from './hooks/useIPC';
 import { ThemeToggle } from './components/ThemeToggle';
 import { URLInput } from './components/URLInput';
+import { BatchDownload } from './components/BatchDownload';
 import { VideoInfo } from './components/VideoInfo';
 import { FormatSelector } from './components/FormatSelector';
 import { DownloadQueue } from './components/DownloadQueue';
@@ -21,20 +22,13 @@ export const App: React.FC = () => {
   const { error, setError } = useAppStore();
   const { getSettings } = useIPC();
 
-  // Debug: Log error state changes
-  useEffect(() => {
-    console.log('Error state changed:', error);
-  }, [error]);
-
   // Load settings on mount with error handling
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        console.log('Loading settings...');
         // Clear any existing errors first
         setError(null);
         await getSettings();
-        console.log('Settings loaded successfully');
         // Ensure error is cleared after successful load
         setError(null);
       } catch (error) {
@@ -77,6 +71,10 @@ export const App: React.FC = () => {
         {/* URL Input */}
         <section>
           <URLInput />
+        </section>
+
+        <section>
+          <BatchDownload />
         </section>
 
         {/* Video Info */}

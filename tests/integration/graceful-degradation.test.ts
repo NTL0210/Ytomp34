@@ -147,7 +147,7 @@ describe('Graceful Degradation', () => {
       
       const invalidRequest = { invalid: 'data' };
       
-      const isValid = (request: any): boolean => {
+      const isValid = (request: unknown): request is { url: string } => {
         return (
           typeof request === 'object' &&
           request !== null &&

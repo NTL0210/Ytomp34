@@ -1,6 +1,6 @@
 import { DownloadTask, DownloadQueue } from '../domain/entities';
 import { DownloadStatus } from '../domain/value-objects';
-import { YtDlpExecutor, Logger, ProgressParser, ProgressData } from '../infrastructure';
+import { YtDlpExecutor, Logger, ProgressData } from '../infrastructure';
 
 /**
  * Callback types for progress and status updates
@@ -20,7 +20,6 @@ export class ExecuteDownloadUseCase {
   constructor(
     private ytDlpExecutor: YtDlpExecutor,
     private queue: DownloadQueue,
-    private progressParser: ProgressParser,
     private logger: Logger,
     private onProgressUpdate: ProgressCallback,
     private onStatusChange: StatusCallback
