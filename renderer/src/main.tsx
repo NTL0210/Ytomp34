@@ -4,10 +4,6 @@ import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
-// Debug: Check if electronAPI is available
-console.log('Renderer starting...');
-console.log('window.electronAPI:', window.electronAPI);
-
 if (!window.electronAPI) {
   console.error('electronAPI is not available! Preload script may have failed.');
   document.body.innerHTML = `

@@ -1,10 +1,19 @@
 {
   "name": "ytomp34",
+  "productName": "Ytomp34",
   "version": "1.0.0",
+  "private": true,
   "description": "Cross-platform video/audio downloader with queue management",
   "main": "dist/electron/main/index.js",
-  "author": "Your Name",
+  "author": "Nguyen Tan Loc",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NTL0210/Ytomp34.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:renderer": "vite",
@@ -13,7 +22,9 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:win": "npm run build && node package-app.js",
+    "build:installer": "npm run build:win && node scripts/create-windows-installer.cjs",
     "test": "jest",
+    "test:electron-smoke": "electron ./scripts/electron-smoke.cjs",
     "test:watch": "jest --watch",
     "test:property": "jest --testPathPattern=property",
     "lint": "eslint . --ext .ts,.tsx"
@@ -36,8 +47,9 @@
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
-    "electron": "^28.0.0",
+    "electron": "42.7.1",
     "electron-packager": "^17.1.2",
+    "electron-winstaller": "5.4.4",
     "eslint": "^8.56.0",
     "fast-check": "^3.15.0",
     "fs-extra": "^11.3.4",

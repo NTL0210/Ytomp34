@@ -4,13 +4,15 @@
  * Validates: Requirements 4.1, 4.2, 5.1, 6.4, 6.5, 8.5, 9.1
  */
 
-import { ipcMain, IpcMainInvokeEvent, BrowserWindow } from 'electron';
+import * as fs from 'fs';
+import { ipcMain, IpcMainInvokeEvent, BrowserWindow, shell } from 'electron';
 import {
   CreateDownloadTaskUseCase,
   ExecuteDownloadUseCase,
   ManageQueueUseCase
 } from '../application';
 import { DownloadQueue } from '../domain/entities';
+import { DownloadStatus } from '../domain/value-objects';
 import { Logger } from '../infrastructure';
 import { ProgressData } from '../infrastructure/ProgressParser';
 import {
@@ -23,6 +25,9 @@ import {
   ResumeDownloadResponse,
   CancelDownloadRequest,
   CancelDownloadResponse,
+  TaskActionRequest,
+  TaskActionResponse,
+  ClearCompletedResponse,
   ProgressUpdateEvent,
   QueueStateEvent
 } from './contracts';
@@ -62,6 +67,12 @@ export class DownloadHandlers {
       IPC_CHANNELS.DOWNLOAD_CANCEL,
       this.handleCancelDownload.bind(this)
     );
+
+    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_RETRY, this.handleRetryDownload.bind(this));
+    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_OPEN_FILE, this.handleOpenFile.bind(this));
+    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_SHOW_IN_FOLDER, this.handleShowInFolder.bind(this));
+    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_REMOVE_HISTORY, this.handleRemoveHistory.bind(this));
+    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_CLEAR_COMPLETED, this.handleClearCompleted.bind(this));
 
     // Start progress update interval (at least once per second)
     this.startProgressUpdateInterval();
@@ -230,10 +241,103 @@ export class DownloadHandlers {
     }
   }
 
+  private async handleRetryDownload(
+    event: IpcMainInvokeEvent,
+    request: unknown
+  ): Promise<TaskActionResponse> {
+    if (!this.isValidTaskActionRequest(request)) {
+      return { success: false, error: 'Invalid task ID' };
+    }
+
+    try {
+      const response = await this.manageQueueUseCase.retryDownload(request);
+      if (response.success) {
+        this.sendQueueUpdate();
+        await this.manageQueueUseCase.processQueue();
+      }
+      return response;
+    } catch (error) {
+      this.logger.error('Failed to retry download', error as Error, { taskId: request.taskId });
+      return { success: false, error: error instanceof Error ? error.message : 'Retry failed' };
+    }
+  }
+
+  private async handleOpenFile(
+    event: IpcMainInvokeEvent,
+    request: unknown
+  ): Promise<TaskActionResponse> {
+    const task = this.getCompletedTask(request);
+    if (!task) return { success: false, error: 'Completed task not found' };
+    if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
+
+    try {
+      const errorMessage = await shell.openPath(task.filePath);
+      return errorMessage ? { success: false, error: errorMessage } : { success: true };
+    } catch (error) {
+      this.logger.error('Failed to open downloaded file', error as Error, { taskId: task.id });
+      return { success: false, error: error instanceof Error ? error.message : 'Could not open file' };
+    }
+  }
+
+  private async handleShowInFolder(
+    event: IpcMainInvokeEvent,
+    request: unknown
+  ): Promise<TaskActionResponse> {
+    const task = this.getCompletedTask(request);
+    if (!task) return { success: false, error: 'Completed task not found' };
+    if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
+
+    try {
+      shell.showItemInFolder(task.filePath);
+      return { success: true };
+    } catch (error) {
+      this.logger.error('Failed to show downloaded file', error as Error, { taskId: task.id });
+      return { success: false, error: error instanceof Error ? error.message : 'Could not show file' };
+    }
+  }
+
+  private async handleRemoveHistory(
+    event: IpcMainInvokeEvent,
+    request: unknown
+  ): Promise<TaskActionResponse> {
+    if (!this.isValidTaskActionRequest(request)) {
+      return { success: false, error: 'Invalid task ID' };
+    }
+
+    try {
+      const response = await this.manageQueueUseCase.removeHistoryTask(request);
+      if (response.success) this.sendQueueUpdate();
+      return response;
+    } catch (error) {
+      this.logger.error('Failed to remove history item', error as Error, { taskId: request.taskId });
+      return { success: false, error: error instanceof Error ? error.message : 'Could not remove history item' };
+    }
+  }
+
+  private async handleClearCompleted(): Promise<ClearCompletedResponse> {
+    try {
+      const response = await this.manageQueueUseCase.clearCompleted();
+      this.sendQueueUpdate();
+      return response;
+    } catch (error) {
+      this.logger.error('Failed to clear completed history', error as Error);
+      return {
+        success: false,
+        removedCount: 0,
+        error: error instanceof Error ? error.message : 'Could not clear completed history'
+      };
+    }
+  }
+
+  private getCompletedTask(request: unknown) {
+    if (!this.isValidTaskActionRequest(request)) return null;
+    return this.queue.tasks.find(task => task.id === request.taskId && task.status === 'completed') || null;
+  }
+
   /**
    * Send progress update event to renderer
    */
-  sendProgressUpdate(taskId: string, progress: ProgressData, status: string): void {
+  sendProgressUpdate(taskId: string, progress: ProgressData, status: DownloadStatus): void {
     const mainWindow = this.getMainWindow();
     if (!mainWindow) return;
 
@@ -242,7 +346,7 @@ export class DownloadHandlers {
       progress: progress.percentage,
       speed: progress.speed,
       eta: progress.eta,
-      status: status as any
+      status
     };
 
     mainWindow.webContents.send(IPC_CHANNELS.DOWNLOAD_PROGRESS, event);
@@ -336,6 +440,16 @@ export class DownloadHandlers {
       request !== null &&
       'taskId' in request &&
       typeof (request as CancelDownloadRequest).taskId === 'string'
+    );
+  }
+
+  private isValidTaskActionRequest(request: unknown): request is TaskActionRequest {
+    return (
+      typeof request === 'object' &&
+      request !== null &&
+      'taskId' in request &&
+      typeof (request as TaskActionRequest).taskId === 'string' &&
+      (request as TaskActionRequest).taskId.length > 0
     );
   }
 }

@@ -1,6 +1,150 @@
 import { spawn, ChildProcess } from 'child_process';
-import { Video } from '../domain/entities';
-import { ProgressData } from './ProgressParser';
+import { app } from 'electron';
+import { PlaylistInfo, Video } from '../domain/entities';
+import { Format, Quality } from '../domain/value-objects';
+import { ProgressData, ProgressParserImpl } from './ProgressParser';
+
+interface YtDlpFormat {
+  format_id?: string;
+  ext?: string;
+  vcodec?: string;
+  acodec?: string;
+  height?: number;
+  tbr?: number;
+  abr?: number;
+  format_note?: string;
+}
+
+interface YtDlpMetadata {
+  id?: string;
+  display_id?: string;
+  webpage_url?: string;
+  title?: string;
+  duration?: number;
+  thumbnail?: string;
+  formats?: YtDlpFormat[];
+}
+
+interface YtDlpPlaylistEntryMetadata {
+  id?: string;
+  url?: string;
+  webpage_url?: string;
+  original_url?: string;
+  title?: string;
+  duration?: number;
+  thumbnail?: string;
+  extractor?: string;
+  extractor_key?: string;
+  ie_key?: string;
+}
+
+interface YtDlpPlaylistMetadata {
+  id?: string;
+  title?: string;
+  playlist_count?: number;
+  n_entries?: number;
+  entries?: Array<YtDlpPlaylistEntryMetadata | null>;
+}
+
+export const MAX_PLAYLIST_ITEMS = 100;
+
+const BEST_AUDIO_SELECTOR = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio';
+
+/**
+ * Build a conservative audio selector from a format id returned by yt-dlp.
+ * Falling back to bestaudio keeps downloads working when a saved format id is
+ * no longer available by the time the download starts.
+ */
+export function buildAudioFormatSelector(quality: string): string {
+  const selectedFormatId = quality.trim();
+
+  if (!selectedFormatId || selectedFormatId === 'best') {
+    return BEST_AUDIO_SELECTOR;
+  }
+
+  // yt-dlp format ids are simple identifiers. Do not allow renderer input to
+  // inject arbitrary format-selector expressions.
+  if (!/^[A-Za-z0-9._-]+$/.test(selectedFormatId)) {
+    return BEST_AUDIO_SELECTOR;
+  }
+
+  return `${selectedFormatId}/${BEST_AUDIO_SELECTOR}`;
+}
+
+function getPlaylistEntryUrl(entry: YtDlpPlaylistEntryMetadata): string | null {
+  const candidates = [entry.webpage_url, entry.original_url, entry.url];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return candidate;
+      }
+    } catch {
+      // Flat YouTube entries can contain only a video id; handle below.
+    }
+  }
+
+  const extractor = `${entry.extractor || ''} ${entry.extractor_key || ''} ${entry.ie_key || ''}`;
+  if (entry.id && /youtube/i.test(extractor)) {
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(entry.id)}`;
+  }
+
+  return null;
+}
+
+export function parsePlaylistMetadata(
+  rawMetadata: unknown,
+  sourceUrl: string,
+  limit = MAX_PLAYLIST_ITEMS
+): PlaylistInfo {
+  if (typeof rawMetadata !== 'object' || rawMetadata === null) {
+    throw new Error('yt-dlp returned invalid playlist metadata');
+  }
+
+  const metadata = rawMetadata as YtDlpPlaylistMetadata;
+  if (!Array.isArray(metadata.entries)) {
+    throw new Error('The URL does not contain a playlist');
+  }
+
+  const parsedEntries = metadata.entries.flatMap(entry => {
+    if (!entry) return [];
+    const url = getPlaylistEntryUrl(entry);
+    if (!url) return [];
+
+    return [{
+      id: entry.id || url,
+      url,
+      title: entry.title || 'Untitled video',
+      duration: typeof entry.duration === 'number' ? entry.duration : 0,
+      thumbnailUrl: entry.thumbnail || ''
+    }];
+  });
+  const seenUrls = new Set<string>();
+  const uniqueEntries = parsedEntries.filter(entry => {
+    if (seenUrls.has(entry.url)) return false;
+    seenUrls.add(entry.url);
+    return true;
+  });
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), MAX_PLAYLIST_ITEMS));
+  const entries = uniqueEntries.slice(0, safeLimit);
+  const reportedTotal = metadata.playlist_count || metadata.n_entries || metadata.entries.length;
+  const totalEntries = Math.max(reportedTotal, uniqueEntries.length);
+
+  if (entries.length === 0) {
+    throw new Error('The playlist does not contain any downloadable videos');
+  }
+
+  return {
+    id: metadata.id || sourceUrl,
+    title: metadata.title || 'Untitled playlist',
+    entries,
+    totalEntries,
+    truncated: totalEntries > entries.length || uniqueEntries.length > entries.length
+  };
+}
 
 /**
  * YtDlpExecutor interface
@@ -16,6 +160,11 @@ export interface YtDlpExecutor {
    * Fetch video metadata using --dump-json
    */
   fetchMetadata(url: string): Promise<Video>;
+
+  /**
+   * Fetch a flat playlist preview without downloading media.
+   */
+  fetchPlaylist(url: string): Promise<PlaylistInfo>;
   
   /**
    * Start download process
@@ -56,6 +205,12 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   private ytDlpCommand: string = 'yt-dlp'; // Default to system yt-dlp
   private ffmpegLocation: string | null = null; // ffmpeg directory path
 
+  private debug(...args: unknown[]): void {
+    if (!app.isPackaged) {
+      console.log(...args);
+    }
+  }
+
   /**
    * Set custom yt-dlp executable path
    */
@@ -72,7 +227,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
 
   async checkInstallation(): Promise<{ installed: boolean; version?: string }> {
     return new Promise((resolve) => {
-      console.log('Checking yt-dlp installation:', this.ytDlpCommand);
+      this.debug('Checking yt-dlp installation:', this.ytDlpCommand);
       
       const process = spawn(this.ytDlpCommand, ['--version']);
       
@@ -88,24 +243,24 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       });
       
       process.on('close', (code) => {
-        console.log('yt-dlp version check completed:', { code, version: version.trim(), error: errorOutput });
+        this.debug('yt-dlp version check completed:', { code, version: version.trim(), error: errorOutput });
         
         if (code === 0 && version.trim()) {
           resolve({ installed: true, version: version.trim() });
         } else {
-          console.log('yt-dlp not working:', { code, error: errorOutput });
+          this.debug('yt-dlp not working:', { code, error: errorOutput });
           resolve({ installed: false });
         }
       });
       
       process.on('error', (error) => {
-        console.log('yt-dlp process error:', error.message);
+        this.debug('yt-dlp process error:', error.message);
         resolve({ installed: false });
       });
       
       // Timeout for version check (5 seconds)
       setTimeout(() => {
-        console.log('yt-dlp version check timeout');
+        this.debug('yt-dlp version check timeout');
         process.kill('SIGKILL');
         resolve({ installed: false });
       }, 5000);
@@ -121,26 +276,26 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`Metadata fetch attempt ${attempt}/${maxRetries} for:`, url);
+        this.debug(`Metadata fetch attempt ${attempt}/${maxRetries} for:`, url);
         
         const video = await this.fetchMetadataAttempt(url, attempt);
-        console.log(`Metadata fetch successful on attempt ${attempt}`);
+        this.debug(`Metadata fetch successful on attempt ${attempt}`);
         return video;
       } catch (error) {
         lastError = error as Error;
-        console.log(`Metadata fetch attempt ${attempt} failed:`, lastError.message);
+        this.debug(`Metadata fetch attempt ${attempt} failed:`, lastError.message);
         
         // If it's a bot detection error, wait longer between retries
         if (lastError.message.includes('not a bot') || lastError.message.includes('Sign in')) {
           if (attempt < maxRetries) {
             const waitTime = attempt * 5000; // 5s, 10s, 15s
-            console.log(`Bot detection detected, waiting ${waitTime}ms before retry...`);
+            this.debug(`Bot detection detected, waiting ${waitTime}ms before retry...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
           }
         } else if (attempt < maxRetries) {
           // For other errors, shorter wait
           const waitTime = attempt * 2000; // 2s, 4s
-          console.log(`Waiting ${waitTime}ms before retry...`);
+          this.debug(`Waiting ${waitTime}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
@@ -155,9 +310,9 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
    */
   private async fetchMetadataAttempt(url: string, attempt: number): Promise<Video> {
     return new Promise((resolve, reject) => {
-      console.log('Starting yt-dlp metadata fetch for:', url);
-      console.log('yt-dlp command:', this.ytDlpCommand);
-      console.log('ffmpeg location:', this.ffmpegLocation);
+      this.debug('Starting yt-dlp metadata fetch for:', url);
+      this.debug('yt-dlp command:', this.ytDlpCommand);
+      this.debug('ffmpeg location:', this.ffmpegLocation);
       
       // Build command arguments with anti-bot measures
       const args = ['--dump-json'];
@@ -177,7 +332,6 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         // Third attempt: Use alternative extraction method
         args.push('--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         args.push('--extractor-args', 'youtube:player_client=android,web');  // Try Android client
-        args.push('--no-check-certificate');  // Skip SSL verification
       }
       
       // Add ffmpeg location if available
@@ -196,7 +350,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       args.push('--skip-unavailable-fragments');
       args.push(url);
       
-      console.log(`Full command (attempt ${attempt}):`, this.ytDlpCommand, args.join(' '));
+      this.debug(`Full command (attempt ${attempt}):`, this.ytDlpCommand, args.join(' '));
       
       const process = spawn(this.ytDlpCommand, args);
       
@@ -205,34 +359,37 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       
       process.stdout.on('data', (data) => {
         const chunk = data.toString();
-        console.log('yt-dlp stdout chunk:', chunk.substring(0, 200) + (chunk.length > 200 ? '...' : ''));
+        this.debug('yt-dlp stdout chunk:', chunk.substring(0, 200) + (chunk.length > 200 ? '...' : ''));
         jsonOutput += chunk;
       });
       
       process.stderr.on('data', (data) => {
         const line = data.toString();
-        console.log('yt-dlp stderr:', line);
+        this.debug('yt-dlp stderr:', line);
         errorOutput += line;
       });
       
       process.on('close', (code) => {
-        console.log('yt-dlp process closed with code:', code);
-        console.log('stdout length:', jsonOutput.length);
-        console.log('stderr length:', errorOutput.length);
+        this.debug('yt-dlp process closed with code:', code);
+        this.debug('stdout length:', jsonOutput.length);
+        this.debug('stderr length:', errorOutput.length);
         
         if (code === 0 && jsonOutput.trim()) {
           try {
             // Try to parse JSON - sometimes there might be multiple JSON objects
             const lines = jsonOutput.trim().split('\n');
-            let videoData = null;
+            let videoData: YtDlpMetadata | null = null;
             
             for (const line of lines) {
               if (line.trim().startsWith('{')) {
                 try {
-                  videoData = JSON.parse(line.trim());
-                  break;
+                  const parsed: unknown = JSON.parse(line.trim());
+                  if (typeof parsed === 'object' && parsed !== null) {
+                    videoData = parsed as YtDlpMetadata;
+                    break;
+                  }
                 } catch (e) {
-                  console.log('Failed to parse line as JSON:', line.substring(0, 100));
+                  this.debug('Failed to parse line as JSON:', line.substring(0, 100));
                   continue;
                 }
               }
@@ -240,7 +397,14 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
             
             if (!videoData) {
               // Try parsing the entire output
-              videoData = JSON.parse(jsonOutput.trim());
+              const parsed: unknown = JSON.parse(jsonOutput.trim());
+              if (typeof parsed === 'object' && parsed !== null) {
+                videoData = parsed as YtDlpMetadata;
+              }
+            }
+
+            if (!videoData) {
+              throw new Error('yt-dlp returned invalid metadata');
             }
             
             // Extract video metadata
@@ -253,7 +417,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
               availableFormats: this.extractFormats(videoData.formats || [])
             };
             
-            console.log('Metadata extracted successfully:', {
+            this.debug('Metadata extracted successfully:', {
               title: video.title,
               duration: video.duration,
               formatCount: video.availableFormats.length
@@ -306,7 +470,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       // Timeout increases with attempts: 45s, 60s, 75s
       const timeout = 45000 + (attempt - 1) * 15000;
       setTimeout(() => {
-        console.log(`yt-dlp metadata fetch timeout (${timeout/1000}s) - killing process`);
+        this.debug(`yt-dlp metadata fetch timeout (${timeout/1000}s) - killing process`);
         process.kill('SIGKILL');
         reject(new Error(`Metadata fetch timeout (${timeout/1000}s) - video may be too large or network is slow. YouTube may also be blocking requests temporarily.`));
       }, timeout);
@@ -322,18 +486,19 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
     onError: (error: string) => void,
     onComplete: () => void
   ): Promise<number> {
-    return new Promise((resolve, reject) => {
-      console.log('Starting download:', { url, format, quality, outputPath });
-      console.log('yt-dlp command:', this.ytDlpCommand);
-      console.log('ffmpeg location:', this.ffmpegLocation);
+    return new Promise((resolve) => {
+      this.debug('Starting download:', { url, format, quality, outputPath });
+      this.debug('yt-dlp command:', this.ytDlpCommand);
+      this.debug('ffmpeg location:', this.ffmpegLocation);
       
       // Build yt-dlp command arguments
       const args = [];
 
       // Format selection based on type
       if (format === 'mp3') {
-        // For MP3: Download best audio and convert to MP3
-        args.push('-f', 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio');
+        // Download the audio format selected in the UI, with a safe fallback
+        // in case that exact format disappears before the download starts.
+        args.push('-f', buildAudioFormatSelector(quality));
         args.push('--extract-audio');
         args.push('--audio-format', 'mp3');
         args.push('--audio-quality', '0'); // Best quality
@@ -378,10 +543,11 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       args.push('--ignore-errors');  // Continue on non-fatal errors
       args.push('--socket-timeout', '30');  // 30 second socket timeout
       args.push('--retries', '3');  // Retry failed downloads
+      args.push('--no-playlist');  // Every queue task represents exactly one media item
       args.push('-o', outputPath);
       args.push(url);
       
-      console.log('Full download command:', this.ytDlpCommand, args.join(' '));
+      this.debug('Full download command:', this.ytDlpCommand, args.join(' '));
       
       const process = spawn(this.ytDlpCommand, args);
       const pid = process.pid!;
@@ -391,6 +557,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       
       let errorOutput = '';
       let lastProgressTime = Date.now();
+      const progressParser = new ProgressParserImpl();
       
       // Parse progress from stdout
       process.stdout.on('data', (data) => {
@@ -398,63 +565,17 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         
         for (const line of lines) {
           if (line.trim()) {
-            console.log('yt-dlp stdout:', line);
+            this.debug('yt-dlp stdout:', line);
             
-            // Try comprehensive progress parsing with multiple patterns
-            let progressMatch = null;
-            
-            // Pattern 1: Full format with ETA
-            progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*[\d.]+\s*\w+\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/i);
-            
-            if (!progressMatch) {
-              // Pattern 2: Without size
-              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+at\s+([\d.]+\s*\w+\/s)\s+ETA\s+([\d:]+)/i);
-            }
-            
-            if (!progressMatch) {
-              // Pattern 3: With speed only
-              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+of\s+~?\s*[\d.]+\s*\w+\s+at\s+([\d.]+\s*\w+\/s)/i);
-            }
-            
-            if (!progressMatch) {
-              // Pattern 4: Percentage and speed
-              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%\s+at\s+([\d.]+\s*\w+\/s)/i);
-            }
-            
-            if (!progressMatch) {
-              // Pattern 5: Percentage only
-              progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)%/i);
-            }
-            
-            if (progressMatch) {
-              const percentage = parseFloat(progressMatch[1]);
-              const speed = progressMatch[2] ? progressMatch[2].trim().replace(/\s+/g, '') : 'Calculating...';
-              const eta = progressMatch[3] ? progressMatch[3].trim() : 'Calculating...';
-              
-              const progress: ProgressData = {
-                percentage: Math.min(100, Math.max(0, percentage)), // Clamp 0-100
-                speed: speed.endsWith('/s') ? speed : speed + '/s',
-                eta
-              };
-              
+            const progress = progressParser.parse(line);
+            if (progress) {
               onProgress(progress);
-              lastProgressTime = Date.now();
-            }
-            
-            // Check for conversion/post-processing progress
-            if (line.includes('[ffmpeg]') || line.includes('Merging') || line.includes('Converting')) {
-              console.log('Post-processing in progress:', line);
-              onProgress({
-                percentage: 99,
-                speed: 'Processing...',
-                eta: 'Almost done'
-              });
               lastProgressTime = Date.now();
             }
             
             // Check for "Destination" line (download complete, starting post-process)
             if (line.includes('[download]') && line.includes('Destination:')) {
-              console.log('Download complete, post-processing...');
+              this.debug('Download complete, post-processing...');
               onProgress({
                 percentage: 100,
                 speed: 'Complete',
@@ -468,22 +589,22 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       
       process.stderr.on('data', (data) => {
         const line = data.toString();
-        console.log('yt-dlp stderr:', line);
+        this.debug('yt-dlp stderr:', line);
         errorOutput += line;
         
         // Check for specific error patterns
         if (line.includes('ERROR:') || line.includes('WARNING:')) {
-          console.log('yt-dlp error/warning:', line);
+          this.debug('yt-dlp error/warning:', line);
         }
       });
       
       process.on('close', (code) => {
         this.processes.delete(pid);
-        console.log('yt-dlp download process closed with code:', code);
-        console.log('Error output:', errorOutput);
+        this.debug('yt-dlp download process closed with code:', code);
+        this.debug('Error output:', errorOutput);
         
         if (code === 0) {
-          console.log('Download completed successfully');
+          this.debug('Download completed successfully');
           onComplete();
         } else {
           console.error('Download failed with code:', code);
@@ -524,7 +645,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       const stallCheckInterval = setInterval(() => {
         const timeSinceLastProgress = Date.now() - lastProgressTime;
         if (timeSinceLastProgress > 120000) { // 2 minutes without progress
-          console.log('Download appears stalled, killing process');
+          this.debug('Download appears stalled, killing process');
           clearInterval(stallCheckInterval);
           process.kill('SIGKILL');
           onError('Download stalled - no progress for 2 minutes');
@@ -541,16 +662,95 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   }
 
   async pauseProcess(pid: number): Promise<void> {
-    const process = this.processes.get(pid);
-    if (process) {
-      process.kill('SIGSTOP');
+    if (process.platform === 'win32') {
+      throw new Error('Pausing downloads is not supported on Windows');
+    }
+
+    const childProcess = this.processes.get(pid);
+    if (childProcess) {
+      childProcess.kill('SIGSTOP');
     }
   }
 
+  async fetchPlaylist(url: string): Promise<PlaylistInfo> {
+    return new Promise((resolve, reject) => {
+      const args = [
+        '--dump-single-json',
+        '--flat-playlist',
+        '--yes-playlist',
+        '--playlist-end',
+        MAX_PLAYLIST_ITEMS.toString(),
+        '--no-warnings',
+        '--ignore-errors',
+        '--socket-timeout',
+        '30',
+        '--extractor-retries',
+        '3',
+        url
+      ];
+      const child = spawn(this.ytDlpCommand, args);
+      let jsonOutput = '';
+      let errorOutput = '';
+      let settled = false;
+
+      const finish = (error?: Error, playlist?: PlaylistInfo) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+
+        if (error) reject(error);
+        else if (playlist) resolve(playlist);
+      };
+
+      child.stdout.on('data', data => {
+        jsonOutput += data.toString();
+      });
+
+      child.stderr.on('data', data => {
+        errorOutput += data.toString();
+      });
+
+      child.on('error', error => {
+        finish(new Error(
+          error.message.includes('ENOENT')
+            ? 'yt-dlp not found - please check installation'
+            : `Playlist process error: ${error.message}`
+        ));
+      });
+
+      child.on('close', code => {
+        if (code !== 0 || !jsonOutput.trim()) {
+          const detail = errorOutput.split('\n')
+            .find(line => line.includes('ERROR:'))
+            ?.replace('ERROR:', '')
+            .trim();
+          finish(new Error(detail || 'Failed to fetch playlist information'));
+          return;
+        }
+
+        try {
+          const metadata: unknown = JSON.parse(jsonOutput.trim());
+          finish(undefined, parsePlaylistMetadata(metadata, url));
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error('Failed to parse playlist information'));
+        }
+      });
+
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        finish(new Error('Playlist information fetch timed out'));
+      }, 90000);
+    });
+  }
+
   async resumeProcess(pid: number): Promise<void> {
-    const process = this.processes.get(pid);
-    if (process) {
-      process.kill('SIGCONT');
+    if (process.platform === 'win32') {
+      throw new Error('Resuming paused downloads is not supported on Windows');
+    }
+
+    const childProcess = this.processes.get(pid);
+    if (childProcess) {
+      childProcess.kill('SIGCONT');
     }
   }
 
@@ -570,13 +770,13 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
     }, 5000);
   }
 
-  private extractFormats(formats: any[]): any[] {
+  private extractFormats(formats: YtDlpFormat[]): Format[] {
     // Extract MP4 and MP3 formats with qualities
     // For MP4: We need to identify video formats that can be merged with audio
     // YouTube typically has separate video and audio streams for high quality
     
-    const videoFormats: Map<number, any> = new Map(); // height -> format
-    const audioFormats: any[] = [];
+    const videoFormats: Map<number, YtDlpFormat> = new Map(); // height -> format
+    const audioFormats: YtDlpFormat[] = [];
     
     formats.forEach(f => {
       // Video formats (has video codec, may or may not have audio)
@@ -607,20 +807,18 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       }
     });
     
-    const result = [];
+    const result: Format[] = [];
     
     // Build MP4 quality options from video formats
     if (videoFormats.size > 0) {
       // Sort by height descending (highest quality first)
       const sortedHeights = Array.from(videoFormats.keys()).sort((a, b) => b - a);
       
-      const mp4Qualities = sortedHeights.map(height => {
-        const format = videoFormats.get(height)!;
+      const mp4Qualities: Quality[] = sortedHeights.map(height => {
         return {
           label: `${height}p`,
           value: `${height}p`, // Use height as value (e.g., "1080p")
-          resolution: `${height}p`,
-          format_id: format.format_id
+          resolution: `${height}p`
         };
       });
       
@@ -628,8 +826,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       mp4Qualities.unshift({
         label: 'Best Quality',
         value: 'best',
-        resolution: 'best',
-        format_id: undefined
+        resolution: 'best'
       });
       
       result.push({
@@ -645,9 +842,9 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         .filter(f => f.abr) // Only include formats with known bitrate
         .sort((a, b) => (b.abr || 0) - (a.abr || 0));
       
-      const mp3Qualities = sortedAudio.slice(0, 5).map(format => ({
-        label: `${Math.round(format.abr)}kbps`,
-        value: format.format_id,
+      const mp3Qualities: Quality[] = sortedAudio.slice(0, 5).map(format => ({
+        label: `${Math.round(format.abr ?? 0)}kbps`,
+        value: format.format_id ?? 'best',
         bitrate: format.abr
       }));
       
@@ -666,7 +863,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       });
     }
     
-    console.log('Extracted formats:', {
+    this.debug('Extracted formats:', {
       videoFormatsCount: videoFormats.size,
       audioFormatsCount: audioFormats.length,
       result

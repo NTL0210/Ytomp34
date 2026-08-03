@@ -10,6 +10,12 @@ export {
 } from './FetchVideoInfoUseCase';
 
 export {
+  FetchPlaylistInfoUseCase,
+  FetchPlaylistInfoRequest,
+  FetchPlaylistInfoResponse
+} from './FetchPlaylistInfoUseCase';
+
+export {
   CreateDownloadTaskUseCase,
   StartDownloadRequest,
   StartDownloadResponse
@@ -28,7 +34,10 @@ export {
   ResumeDownloadRequest,
   ResumeDownloadResponse,
   CancelDownloadRequest,
-  CancelDownloadResponse
+  CancelDownloadResponse,
+  TaskActionRequest,
+  TaskActionResponse,
+  ClearCompletedResponse
 } from './ManageQueueUseCase';
 
 export {

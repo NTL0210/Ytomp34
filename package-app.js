@@ -1,6 +1,8 @@
 const packager = require('electron-packager');
 const path = require('path');
 const fs = require('fs-extra');
+const rootPackage = require('./package.json');
+const electronPackage = require('electron/package.json');
 
 async function packageApp() {
   try {
@@ -32,12 +34,13 @@ async function packageApp() {
     
     // Create minimal package.json for the app
     const appPackageJson = {
-      name: 'ytomp34',
-      version: '1.0.0',
-      description: 'Cross-platform video/audio downloader with queue management',
+      name: rootPackage.name,
+      productName: rootPackage.productName,
+      version: rootPackage.version,
+      description: rootPackage.description,
       main: 'dist/electron/main/index.js',
-      author: 'Your Name',
-      license: 'MIT'
+      author: rootPackage.author,
+      license: rootPackage.license
     };
     fs.writeFileSync(
       path.join(appDir, 'package.json'),
@@ -54,7 +57,16 @@ async function packageApp() {
       overwrite: true,
       icon: path.join(__dirname, 'assets', 'icon.ico'),
       asar: false,  // Disable asar to avoid file lock issues
-      electronVersion: '28.3.3',
+      appVersion: rootPackage.version,
+      buildVersion: rootPackage.version,
+      electronVersion: electronPackage.version,
+      appBundleId: 'com.ytomp34.app',
+      win32metadata: {
+        CompanyName: rootPackage.author,
+        FileDescription: rootPackage.description,
+        ProductName: 'Ytomp34',
+        InternalName: 'Ytomp34'
+      },
       tmpdir: path.join(__dirname, 'tmp-build')  // Use local temp dir
     });
     

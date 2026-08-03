@@ -3,6 +3,8 @@
  * Ensures type safety for IPC communication
  */
 
+import type { AppUpdateResponse, AppUpdateStatus } from './app-update';
+
 interface Video {
   readonly id: string;
   readonly url: string;
@@ -57,6 +59,31 @@ interface FetchVideoInfoResponse {
   };
 }
 
+interface PlaylistEntry {
+  readonly id: string;
+  readonly url: string;
+  readonly title: string;
+  readonly duration: number;
+  readonly thumbnailUrl: string;
+}
+
+interface PlaylistInfo {
+  readonly id: string;
+  readonly title: string;
+  readonly entries: PlaylistEntry[];
+  readonly totalEntries: number;
+  readonly truncated: boolean;
+}
+
+interface FetchPlaylistInfoResponse {
+  success: boolean;
+  data?: PlaylistInfo;
+  error?: {
+    type: 'invalid_url' | 'yt_dlp_missing' | 'network_error' | 'unknown';
+    message: string;
+  };
+}
+
 interface StartDownloadResponse {
   success: boolean;
   taskId?: string;
@@ -79,6 +106,15 @@ interface ResumeDownloadResponse {
 interface CancelDownloadResponse {
   success: boolean;
   error?: string;
+}
+
+interface TaskActionResponse {
+  success: boolean;
+  error?: string;
+}
+
+interface ClearCompletedResponse extends TaskActionResponse {
+  removedCount: number;
 }
 
 interface GetSettingsResponse {
@@ -111,7 +147,9 @@ interface QueueStateEvent {
 }
 
 interface ElectronAPI {
+  platform: NodeJS.Platform;
   fetchVideoInfo: (url: string) => Promise<FetchVideoInfoResponse>;
+  fetchPlaylistInfo: (url: string) => Promise<FetchPlaylistInfoResponse>;
   startDownload: (
     url: string,
     videoTitle: string,
@@ -121,6 +159,11 @@ interface ElectronAPI {
   pauseDownload: (taskId: string) => Promise<PauseDownloadResponse>;
   resumeDownload: (taskId: string) => Promise<ResumeDownloadResponse>;
   cancelDownload: (taskId: string) => Promise<CancelDownloadResponse>;
+  retryDownload: (taskId: string) => Promise<TaskActionResponse>;
+  openDownloadedFile: (taskId: string) => Promise<TaskActionResponse>;
+  showDownloadedFile: (taskId: string) => Promise<TaskActionResponse>;
+  removeHistoryItem: (taskId: string) => Promise<TaskActionResponse>;
+  clearCompleted: () => Promise<ClearCompletedResponse>;
   getSettings: () => Promise<GetSettingsResponse>;
   updateSettings: (settings: {
     theme?: 'light' | 'dark';
@@ -128,9 +171,13 @@ interface ElectronAPI {
     concurrentLimit?: number;
   }) => Promise<UpdateSettingsResponse>;
   selectFolder: () => Promise<SelectFolderResponse>;
+  getUpdateStatus: () => Promise<AppUpdateResponse>;
+  checkForAppUpdate: () => Promise<AppUpdateResponse>;
+  downloadAppUpdate: () => Promise<AppUpdateResponse>;
+  installAppUpdate: () => Promise<AppUpdateResponse>;
   onProgressUpdate: (callback: (data: ProgressUpdateEvent) => void) => () => void;
   onQueueUpdate: (callback: (data: QueueStateEvent) => void) => () => void;
-  removeAllListeners: (channel: string) => void;
+  onUpdateStatus: (callback: (status: AppUpdateStatus) => void) => () => void;
 }
 
 declare global {

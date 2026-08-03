@@ -5,6 +5,7 @@
 
 import {
   FetchVideoInfoUseCase,
+  FetchPlaylistInfoUseCase,
   CreateDownloadTaskUseCase,
   ExecuteDownloadUseCase,
   ManageQueueUseCase,
@@ -16,6 +17,13 @@ describe('Use Cases - Structure Validation', () => {
     it('should be defined and have execute method', () => {
       expect(FetchVideoInfoUseCase).toBeDefined();
       expect(typeof FetchVideoInfoUseCase.prototype.execute).toBe('function');
+    });
+  });
+
+  describe('FetchPlaylistInfoUseCase', () => {
+    it('should be defined and have execute method', () => {
+      expect(FetchPlaylistInfoUseCase).toBeDefined();
+      expect(typeof FetchPlaylistInfoUseCase.prototype.execute).toBe('function');
     });
   });
 

@@ -5,27 +5,30 @@
  */
 
 import { app, BrowserWindow } from 'electron';
+import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 
 // Domain entities
-import { DownloadQueue } from './domain/entities';
+import { DownloadQueue, DownloadTask } from './domain/entities';
+import { ProgressData } from './infrastructure/ProgressParser';
 
 // Infrastructure services
 import {
   FileLogger,
   FileSanitizerImpl,
-  ProgressParserImpl,
   SettingsStoreImpl,
   YtDlpExecutorImpl,
   QueuePersistence,
   ErrorCategorizer,
   YtDlpInstaller,
-  FfmpegInstaller
+  FfmpegInstaller,
+  handleSquirrelStartup,
+  AppUpdateService
 } from './infrastructure';
 
 // Application use cases
 import {
+  FetchPlaylistInfoUseCase,
   FetchVideoInfoUseCase,
   CreateDownloadTaskUseCase,
   ExecuteDownloadUseCase,
@@ -34,14 +37,14 @@ import {
 } from './application';
 
 // IPC handlers
-import { VideoHandlers, DownloadHandlers, SettingsHandlers } from './ipc';
+import { VideoHandlers, DownloadHandlers, SettingsHandlers, UpdateHandlers, IPC_CHANNELS } from './ipc';
 
 /**
  * Dependency Injection Container
  */
 class Container {
   private static instance: Container;
-  private services: Map<string, any> = new Map();
+  private services: Map<string, unknown> = new Map();
 
   static getInstance(): Container {
     if (!Container.instance) {
@@ -59,7 +62,7 @@ class Container {
     if (!service) {
       throw new Error(`Service not found: ${key}`);
     }
-    return service;
+    return service as T;
   }
 }
 
@@ -116,7 +119,6 @@ class Application {
     // Infrastructure services
     const logger = new FileLogger();
     const fileSanitizer = new FileSanitizerImpl();
-    const progressParser = new ProgressParserImpl();
     const settingsStore = new SettingsStoreImpl();
     const ytDlpExecutor = new YtDlpExecutorImpl();
     const errorCategorizer = new ErrorCategorizer();
@@ -125,7 +127,6 @@ class Application {
     // Register infrastructure services
     this.container.register('logger', logger);
     this.container.register('fileSanitizer', fileSanitizer);
-    this.container.register('progressParser', progressParser);
     this.container.register('settingsStore', settingsStore);
     this.container.register('ytDlpExecutor', ytDlpExecutor);
     this.container.register('errorCategorizer', errorCategorizer);
@@ -302,7 +303,7 @@ class Application {
 
       if (restoredQueue) {
         // Restore tasks but reset downloading tasks to pending
-        queue.tasks = restoredQueue.tasks.map((task: any) => {
+        queue.tasks = restoredQueue.tasks.map((task: DownloadTask) => {
           if (task.status === 'downloading') {
             return { ...task, status: 'pending' as const, processId: undefined };
           }
@@ -327,7 +328,7 @@ class Application {
     // Determine preload path correctly for both development and production
     let preloadPath: string;
     
-    if (process.env.NODE_ENV === 'development') {
+    if (!app.isPackaged) {
       // Development: project_root/dist/electron/preload/index.js
       preloadPath = path.join(__dirname, '..', 'preload', 'index.js');
     } else {
@@ -337,12 +338,12 @@ class Application {
       preloadPath = path.join(__dirname, '..', 'preload', 'index.js');
       
       // Verify the file exists, if not try alternative paths
-      if (!require('fs').existsSync(preloadPath)) {
+      if (!fs.existsSync(preloadPath)) {
         // Try absolute path from app root
         const appRoot = process.resourcesPath ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..', '..', '..');
         preloadPath = path.join(appRoot, 'dist', 'electron', 'preload', 'index.js');
         
-        if (!require('fs').existsSync(preloadPath)) {
+        if (!fs.existsSync(preloadPath)) {
           // Last resort: relative to main process
           preloadPath = path.join(__dirname, '..', 'preload', 'index.js');
         }
@@ -352,7 +353,7 @@ class Application {
     logger.info('Preload path resolved', { 
       preloadPath, 
       __dirname, 
-      exists: require('fs').existsSync(preloadPath),
+      exists: fs.existsSync(preloadPath),
       resourcesPath: process.resourcesPath,
       nodeEnv: process.env.NODE_ENV
     });
@@ -363,14 +364,14 @@ class Application {
       webPreferences: {
         contextIsolation: true,      // CRITICAL: Isolate renderer context
         nodeIntegration: false,       // CRITICAL: Disable Node.js in renderer
-        sandbox: false,               // CRITICAL: Disable sandbox to allow preload to run
+        sandbox: true,
         preload: preloadPath,
-        webSecurity: false            // Allow loading local files in production
+        webSecurity: true
       }
     });
 
     // Load renderer
-    if (process.env.NODE_ENV === 'development') {
+    if (!app.isPackaged) {
       this.mainWindow.loadURL('http://localhost:5173');
       this.mainWindow.webContents.openDevTools();
     } else {
@@ -387,7 +388,7 @@ class Application {
       
       logger.info('Loading renderer from', { 
         rendererPath, 
-        exists: require('fs').existsSync(rendererPath),
+        exists: fs.existsSync(rendererPath),
         resourcesPath: process.resourcesPath
       });
       
@@ -403,8 +404,6 @@ class Application {
         });
       });
       
-      // Open DevTools for debugging
-      this.mainWindow.webContents.openDevTools();
     }
 
     this.mainWindow.on('closed', () => {
@@ -428,6 +427,12 @@ class Application {
       this.container.resolve('errorCategorizer')
     );
 
+    const fetchPlaylistInfoUseCase = new FetchPlaylistInfoUseCase(
+      this.container.resolve('ytDlpExecutor'),
+      logger,
+      this.container.resolve('errorCategorizer')
+    );
+
     const createDownloadTaskUseCase = new CreateDownloadTaskUseCase(
       queue,
       this.container.resolve('fileSanitizer'),
@@ -436,13 +441,13 @@ class Application {
     );
 
     // Create callbacks for ExecuteDownloadUseCase
-    const onProgressUpdate = (taskId: string, progress: any) => {
+    const onProgressUpdate = (taskId: string, progress: ProgressData) => {
       if (this.downloadHandlers) {
         this.downloadHandlers.sendProgressUpdate(taskId, progress, 'downloading');
       }
     };
 
-    const onStatusChange = (taskId: string, status: string) => {
+    const onStatusChange = () => {
       if (this.downloadHandlers) {
         this.downloadHandlers.sendQueueUpdate();
       }
@@ -451,7 +456,6 @@ class Application {
     const executeDownloadUseCase = new ExecuteDownloadUseCase(
       this.container.resolve('ytDlpExecutor'),
       queue,
-      this.container.resolve('progressParser'),
       logger,
       onProgressUpdate,
       onStatusChange
@@ -474,7 +478,11 @@ class Application {
     );
 
     // Register IPC handlers
-    const videoHandlers = new VideoHandlers(fetchVideoInfoUseCase, logger);
+    const videoHandlers = new VideoHandlers(
+      fetchVideoInfoUseCase,
+      fetchPlaylistInfoUseCase,
+      logger
+    );
     videoHandlers.register();
 
     this.downloadHandlers = new DownloadHandlers(
@@ -493,6 +501,14 @@ class Application {
       logger
     );
     settingsHandlers.register();
+
+    const updateService = new AppUpdateService(logger, (status) => {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, status);
+      }
+    }, () => queue.getActiveTasksCount() === 0);
+    const updateHandlers = new UpdateHandlers(updateService);
+    updateHandlers.register();
 
     logger.info('All IPC handlers registered');
   }
@@ -523,12 +539,19 @@ class Application {
 // Electron App Lifecycle
 // ============================================================================
 
+const squirrelStartupHandled = handleSquirrelStartup();
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.squirrel.ytomp34.Ytomp34');
+}
+
 let application: Application | null = null;
 
-app.whenReady().then(async () => {
-  application = new Application();
-  await application.initialize();
-});
+if (!squirrelStartupHandled) {
+  app.whenReady().then(async () => {
+    application = new Application();
+    await application.initialize();
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

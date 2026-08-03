@@ -12,3 +12,11 @@ export { DownloadTaskParser } from './DownloadTaskParser';
 export { ErrorCategorizer } from './ErrorCategorizer';
 export { YtDlpInstaller } from './YtDlpInstaller';
 export { FfmpegInstaller } from './FfmpegInstaller';
+export { getSquirrelAction, handleSquirrelStartup } from './SquirrelStartup';
+export {
+  AppUpdateService,
+  AppUpdateState,
+  AppUpdateStatus,
+  isNewerVersion,
+  parseVersion
+} from './AppUpdateService';

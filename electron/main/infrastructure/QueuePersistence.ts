@@ -1,7 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import { DownloadQueue } from '../domain/entities';
+import { DownloadQueue, DownloadTask } from '../domain/entities';
+
+interface PersistedQueue {
+  id: string;
+  maxConcurrent: number;
+  tasks: DownloadTask[];
+}
 
 /**
  * QueuePersistence service
@@ -26,14 +32,14 @@ export class QueuePersistence {
     await fs.promises.writeFile(this.queueFile, json, 'utf-8');
   }
 
-  async load(): Promise<any | null> {
+  async load(): Promise<PersistedQueue | null> {
     try {
       if (!fs.existsSync(this.queueFile)) {
         return null;
       }
       
       const data = await fs.promises.readFile(this.queueFile, 'utf-8');
-      return JSON.parse(data);
+      return JSON.parse(data) as PersistedQueue;
     } catch (error) {
       return null;
     }

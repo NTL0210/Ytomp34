@@ -9,6 +9,7 @@ import React, { useState } from 'react';
 import { Folder, Settings as SettingsIcon } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useIPC } from '../hooks/useIPC';
+import { AppUpdate } from './AppUpdate';
 
 export const Settings: React.FC = () => {
   const { settings } = useAppStore();
@@ -77,6 +78,8 @@ export const Settings: React.FC = () => {
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Concurrent downloads control how many files download simultaneously. Higher values may use more bandwidth and system resources.
           </p>
+
+          <AppUpdate />
         </div>
       )}
     </div>

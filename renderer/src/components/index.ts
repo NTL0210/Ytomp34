@@ -5,6 +5,8 @@
 
 export { ThemeToggle } from './ThemeToggle';
 export { URLInput } from './URLInput';
+export { BatchDownload } from './BatchDownload';
+export { AppUpdate } from './AppUpdate';
 export { VideoInfo } from './VideoInfo';
 export { FormatSelector } from './FormatSelector';
 export { DownloadItem } from './DownloadItem';

@@ -5,121 +5,63 @@
  */
 
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import type {
+  AppUpdateResponse,
+  AppUpdateStatus,
+  CancelDownloadRequest,
+  CancelDownloadResponse,
+  ClearCompletedResponse,
+  FetchPlaylistInfoRequest,
+  FetchPlaylistInfoResponse,
+  FetchVideoInfoRequest,
+  FetchVideoInfoResponse,
+  GetSettingsResponse,
+  PauseDownloadRequest,
+  PauseDownloadResponse,
+  ProgressUpdateEvent,
+  QueueStateEvent,
+  ResumeDownloadRequest,
+  ResumeDownloadResponse,
+  SelectFolderResponse,
+  StartDownloadRequest,
+  StartDownloadResponse,
+  TaskActionRequest,
+  TaskActionResponse,
+  UpdateSettingsRequest,
+  UpdateSettingsResponse
+} from '../main/ipc/contracts';
 
 // Inline IPC channel constants to avoid import issues in preload
 const IPC_CHANNELS = {
   VIDEO_FETCH_INFO: 'video:fetch-info',
+  VIDEO_FETCH_PLAYLIST: 'video:fetch-playlist',
   DOWNLOAD_START: 'download:start',
   DOWNLOAD_PAUSE: 'download:pause',
   DOWNLOAD_RESUME: 'download:resume',
   DOWNLOAD_CANCEL: 'download:cancel',
+  DOWNLOAD_RETRY: 'download:retry',
+  DOWNLOAD_OPEN_FILE: 'download:open-file',
+  DOWNLOAD_SHOW_IN_FOLDER: 'download:show-in-folder',
+  DOWNLOAD_REMOVE_HISTORY: 'download:remove-history',
+  DOWNLOAD_CLEAR_COMPLETED: 'download:clear-completed',
   DOWNLOAD_PROGRESS: 'download:progress',
   DOWNLOAD_QUEUE_UPDATE: 'download:queue-update',
   SETTINGS_GET: 'settings:get',
   SETTINGS_UPDATE: 'settings:update',
-  SETTINGS_SELECT_FOLDER: 'settings:select-folder'
+  SETTINGS_SELECT_FOLDER: 'settings:select-folder',
+  UPDATE_GET_STATUS: 'update:get-status',
+  UPDATE_CHECK: 'update:check',
+  UPDATE_DOWNLOAD: 'update:download',
+  UPDATE_INSTALL: 'update:install',
+  UPDATE_STATUS: 'update:status'
 } as const;
-
-// Type definitions (inline to avoid imports)
-interface FetchVideoInfoRequest {
-  url: string;
-}
-
-interface FetchVideoInfoResponse {
-  success: boolean;
-  video?: {
-    title: string;
-    duration: number;
-    thumbnail: string;
-    formats: Array<{ quality: string; format: string }>;
-  };
-  error?: { type: string; message: string };
-}
-
-interface StartDownloadRequest {
-  url: string;
-  videoTitle: string;
-  format: 'mp4' | 'mp3';
-  quality: string;
-}
-
-interface StartDownloadResponse {
-  success: boolean;
-  taskId?: string;
-  error?: { type: string; message: string };
-}
-
-interface PauseDownloadRequest {
-  taskId: string;
-}
-
-interface PauseDownloadResponse {
-  success: boolean;
-  error?: { type: string; message: string };
-}
-
-interface ResumeDownloadRequest {
-  taskId: string;
-}
-
-interface ResumeDownloadResponse {
-  success: boolean;
-  error?: { type: string; message: string };
-}
-
-interface CancelDownloadRequest {
-  taskId: string;
-}
-
-interface CancelDownloadResponse {
-  success: boolean;
-  error?: { type: string; message: string };
-}
-
-interface GetSettingsResponse {
-  success: boolean;
-  settings?: {
-    downloadPath: string;
-    theme: 'light' | 'dark' | 'system';
-    concurrentLimit: number;
-  };
-  error?: { type: string; message: string };
-}
-
-interface UpdateSettingsRequest {
-  downloadPath?: string;
-  theme?: 'light' | 'dark' | 'system';
-  concurrentLimit?: number;
-}
-
-interface UpdateSettingsResponse {
-  success: boolean;
-  error?: { type: string; message: string };
-}
-
-interface SelectFolderResponse {
-  success: boolean;
-  path?: string;
-  error?: { type: string; message: string };
-}
-
-interface ProgressUpdateEvent {
-  taskId: string;
-  progress: number;
-  speed: string;
-  eta: string;
-  status: string;
-}
-
-interface QueueStateEvent {
-  tasks: Array<any>;
-}
-
 
 /**
  * Electron API exposed to renderer process
  */
 const electronAPI = {
+  platform: process.platform,
+
   // ============================================================================
   // Video Operations
   // ============================================================================
@@ -130,6 +72,12 @@ const electronAPI = {
   fetchVideoInfo: (url: string): Promise<FetchVideoInfoResponse> => {
     const request: FetchVideoInfoRequest = { url };
     return ipcRenderer.invoke(IPC_CHANNELS.VIDEO_FETCH_INFO, request);
+  },
+
+  /** Fetch a flat playlist preview without downloading media. */
+  fetchPlaylistInfo: (url: string): Promise<FetchPlaylistInfoResponse> => {
+    const request: FetchPlaylistInfoRequest = { url };
+    return ipcRenderer.invoke(IPC_CHANNELS.VIDEO_FETCH_PLAYLIST, request);
   },
 
   // ============================================================================
@@ -173,6 +121,30 @@ const electronAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_CANCEL, request);
   },
 
+  retryDownload: (taskId: string): Promise<TaskActionResponse> => {
+    const request: TaskActionRequest = { taskId };
+    return ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_RETRY, request);
+  },
+
+  openDownloadedFile: (taskId: string): Promise<TaskActionResponse> => {
+    const request: TaskActionRequest = { taskId };
+    return ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_OPEN_FILE, request);
+  },
+
+  showDownloadedFile: (taskId: string): Promise<TaskActionResponse> => {
+    const request: TaskActionRequest = { taskId };
+    return ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_SHOW_IN_FOLDER, request);
+  },
+
+  removeHistoryItem: (taskId: string): Promise<TaskActionResponse> => {
+    const request: TaskActionRequest = { taskId };
+    return ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_REMOVE_HISTORY, request);
+  },
+
+  clearCompleted: (): Promise<ClearCompletedResponse> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.DOWNLOAD_CLEAR_COMPLETED, {});
+  },
+
   // ============================================================================
   // Settings Operations
   // ============================================================================
@@ -196,6 +168,26 @@ const electronAPI = {
    */
   selectFolder: (): Promise<SelectFolderResponse> => {
     return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SELECT_FOLDER, {});
+  },
+
+  // ============================================================================
+  // Application Update Operations
+  // ============================================================================
+
+  getUpdateStatus: (): Promise<AppUpdateResponse> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATE_GET_STATUS, {});
+  },
+
+  checkForAppUpdate: (): Promise<AppUpdateResponse> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK, {});
+  },
+
+  downloadAppUpdate: (): Promise<AppUpdateResponse> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DOWNLOAD, {});
+  },
+
+  installAppUpdate: (): Promise<AppUpdateResponse> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL, {});
   },
 
   // ============================================================================
@@ -232,11 +224,15 @@ const electronAPI = {
     };
   },
 
-  /**
-   * Remove all listeners for a specific channel
-   */
-  removeAllListeners: (channel: string): void => {
-    ipcRenderer.removeAllListeners(channel);
+  onUpdateStatus: (callback: (status: AppUpdateStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: AppUpdateStatus) => {
+      callback(status);
+    };
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, listener);
+
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_STATUS, listener);
+    };
   }
 };
 

@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
+import { spawn } from 'child_process';
 import { app } from 'electron';
 import { FileLogger } from './Logger';
 
@@ -62,14 +63,12 @@ export class YtDlpInstaller {
     try {
       this.logger.info('Downloading yt-dlp...', { url: this.downloadUrl });
 
-      await this.downloadFile(this.downloadUrl, this.ytDlpPath);
+      const version = await this.downloadAndReplace();
 
-      // Make executable on Unix-like systems
-      if (os.platform() !== 'win32') {
-        fs.chmodSync(this.ytDlpPath, 0o755);
-      }
-
-      this.logger.info('yt-dlp installed successfully', { path: this.ytDlpPath });
+      this.logger.info('yt-dlp installed successfully', {
+        path: this.ytDlpPath,
+        version
+      });
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -81,32 +80,49 @@ export class YtDlpInstaller {
   /**
    * Download file from URL
    */
-  private downloadFile(url: string, destination: string): Promise<void> {
+  private downloadFile(url: string, destination: string, redirectCount = 0): Promise<void> {
     return new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(destination);
+      if (redirectCount > 5) {
+        reject(new Error('Too many redirects while downloading yt-dlp'));
+        return;
+      }
+
       let downloadedBytes = 0;
       let totalBytes = 0;
 
       const request = https.get(url, (response) => {
         // Handle redirects
-        if (response.statusCode === 301 || response.statusCode === 302) {
+        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
           const redirectUrl = response.headers.location;
+          response.resume();
+
           if (redirectUrl) {
-            file.close();
-            fs.unlinkSync(destination);
-            this.downloadFile(redirectUrl, destination).then(resolve).catch(reject);
+            const resolvedUrl = new URL(redirectUrl, url).toString();
+            this.downloadFile(resolvedUrl, destination, redirectCount + 1).then(resolve).catch(reject);
             return;
           }
+
+          reject(new Error('Download redirect did not include a destination'));
+          return;
         }
 
         if (response.statusCode !== 200) {
-          file.close();
-          fs.unlinkSync(destination);
+          response.resume();
           reject(new Error(`Failed to download: HTTP ${response.statusCode}`));
           return;
         }
 
         totalBytes = parseInt(response.headers['content-length'] || '0', 10);
+        const file = fs.createWriteStream(destination);
+        let settled = false;
+
+        const fail = (error: Error) => {
+          if (settled) return;
+          settled = true;
+          file.destroy();
+          this.removeFileIfPresent(destination);
+          reject(error);
+        };
 
         response.on('data', (chunk) => {
           downloadedBytes += chunk.length;
@@ -117,23 +133,149 @@ export class YtDlpInstaller {
         response.pipe(file);
 
         file.on('finish', () => {
-          file.close();
-          resolve();
+          file.close((error) => {
+            if (error) {
+              fail(error);
+              return;
+            }
+
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          });
         });
+
+        response.on('error', fail);
+        file.on('error', fail);
       });
 
-      request.on('error', (error) => {
-        file.close();
-        fs.unlinkSync(destination);
-        reject(error);
-      });
-
-      file.on('error', (error) => {
-        file.close();
-        fs.unlinkSync(destination);
-        reject(error);
-      });
+      request.on('error', reject);
     });
+  }
+
+  /**
+   * Download and validate a replacement before touching the working binary.
+   * The previous executable is restored if the final rename fails.
+   */
+  private async downloadAndReplace(): Promise<string> {
+    const uniqueSuffix = `${process.pid}-${Date.now()}`;
+    const temporaryPath = `${this.ytDlpPath}.${uniqueSuffix}.download`;
+    const backupPath = `${this.ytDlpPath}.${uniqueSuffix}.backup`;
+    let backupCreated = false;
+
+    try {
+      await this.downloadFile(this.downloadUrl, temporaryPath);
+
+      if (os.platform() !== 'win32') {
+        fs.chmodSync(temporaryPath, 0o755);
+      }
+
+      const version = await this.verifyExecutable(temporaryPath);
+
+      if (fs.existsSync(this.ytDlpPath)) {
+        fs.renameSync(this.ytDlpPath, backupPath);
+        backupCreated = true;
+      }
+
+      try {
+        fs.renameSync(temporaryPath, this.ytDlpPath);
+      } catch (replaceError) {
+        if (backupCreated && fs.existsSync(backupPath)) {
+          try {
+            fs.renameSync(backupPath, this.ytDlpPath);
+            backupCreated = false;
+          } catch (rollbackError) {
+            throw new Error(
+              `Failed to replace yt-dlp (${this.errorMessage(replaceError)}) and restore the previous version: ${this.errorMessage(rollbackError)}`
+            );
+          }
+        }
+
+        throw replaceError;
+      }
+
+      if (backupCreated) {
+        try {
+          fs.unlinkSync(backupPath);
+          backupCreated = false;
+        } catch (cleanupError) {
+          // A leftover backup is harmless and can help manual recovery.
+          this.logger.error('Failed to remove old yt-dlp backup', cleanupError as Error, {
+            path: backupPath
+          });
+        }
+      }
+
+      return version;
+    } finally {
+      this.removeFileIfPresent(temporaryPath);
+    }
+  }
+
+  private verifyExecutable(executablePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(executablePath, ['--version']);
+      let version = '';
+      let errorOutput = '';
+      let settled = false;
+
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+
+        if (error) {
+          reject(error);
+        } else {
+          resolve(version.trim());
+        }
+      };
+
+      child.stdout.on('data', (data) => {
+        version += data.toString();
+      });
+
+      child.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+
+      child.on('error', (error) => {
+        finish(new Error(`Downloaded yt-dlp could not start: ${error.message}`));
+      });
+
+      child.on('close', (code) => {
+        if (code !== 0 || !version.trim()) {
+          finish(new Error(
+            `Downloaded yt-dlp failed verification${errorOutput.trim() ? `: ${errorOutput.trim()}` : ''}`
+          ));
+          return;
+        }
+
+        finish();
+      });
+
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        finish(new Error('Downloaded yt-dlp verification timed out'));
+      }, 10000);
+    });
+  }
+
+  private removeFileIfPresent(filePath: string): void {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      this.logger.error('Failed to clean up temporary yt-dlp file', error as Error, {
+        path: filePath
+      });
+    }
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   /**
@@ -141,13 +283,13 @@ export class YtDlpInstaller {
    */
   async update(): Promise<{ success: boolean; error?: string }> {
     try {
-      // Remove old version
-      if (fs.existsSync(this.ytDlpPath)) {
-        fs.unlinkSync(this.ytDlpPath);
-      }
-
-      // Download new version
-      return await this.install();
+      this.logger.info('Updating yt-dlp...', { url: this.downloadUrl });
+      const version = await this.downloadAndReplace();
+      this.logger.info('yt-dlp updated successfully', {
+        path: this.ytDlpPath,
+        version
+      });
+      return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error('Failed to update yt-dlp', error as Error);
