@@ -22,7 +22,7 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:win": "npm run build && node package-app.js",
-    "build:installer": "npm run build && node scripts/clean-installer-output.cjs && electron-builder --win nsis --config electron-builder.json",
+    "build:installer": "npm run build && node scripts/clean-installer-output.cjs && electron-builder --win nsis --config electron-builder.json --publish never",
     "build:legacy-installer": "npm run build:win && node scripts/create-windows-installer.cjs",
     "test": "jest",
     "test:electron-smoke": "electron ./scripts/electron-smoke.cjs",
