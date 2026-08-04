@@ -10,7 +10,11 @@ export { YtDlpExecutor, YtDlpExecutorImpl } from './YtDlpExecutor';
 export { QueuePersistence } from './QueuePersistence';
 export { DownloadTaskParser } from './DownloadTaskParser';
 export { ErrorCategorizer } from './ErrorCategorizer';
-export { YtDlpInstaller } from './YtDlpInstaller';
+export {
+  YtDlpInstaller,
+  MIN_SUPPORTED_YT_DLP_VERSION,
+  isYtDlpVersionOlderThan
+} from './YtDlpInstaller';
 export { FfmpegInstaller } from './FfmpegInstaller';
 export { getSquirrelAction, handleSquirrelStartup } from './SquirrelStartup';
 export {

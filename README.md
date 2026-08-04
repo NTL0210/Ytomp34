@@ -74,11 +74,16 @@ The packaged application is written to:
 build/Ytomp34-win32-x64/Ytomp34.exe
 ```
 
-The Windows installer and Squirrel update artifacts are written to
-`build/installer`. Upload the generated `Setup.exe`, `.nupkg`, and `RELEASES`
-files to the same public GitHub Release. The in-app updater never checks or
-downloads in development mode, and installed builds require separate user
-actions to check, download, and restart to install an update.
+The assisted Windows installer and NSIS update artifacts are written to
+`build/installer`. The installer lets the user choose the installation folder
+and creates Desktop and Start Menu shortcuts. Upload the generated `Setup.exe`,
+`Setup.exe.blockmap`, and `latest.yml` files to the same public GitHub Release.
+The in-app updater never checks or downloads in development mode, and installed
+builds require separate user actions to check, download, and restart to install
+an update.
+
+`npm run build:legacy-installer` remains available for one transition release
+if existing Squirrel installations need compatible update artifacts.
 
 ### Publishing a release
 
@@ -86,8 +91,8 @@ The Windows release workflow runs only for a semantic version tag such as
 `v1.0.1`. Before creating a tag, update the `version` field in `package.json`
 and `package-lock.json`, then commit and push that change. The workflow rejects
 a tag that does not exactly match the package version. A successful run creates
-the GitHub Release and uploads `Setup.exe`, `.nupkg`, `RELEASES`, and
-`SHA256SUMS.txt`.
+the GitHub Release and uploads `Setup.exe`, `Setup.exe.blockmap`, `latest.yml`,
+and `SHA256SUMS.txt`.
 
 ```bash
 git tag v1.0.1

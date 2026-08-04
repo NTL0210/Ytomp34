@@ -71,6 +71,19 @@ export function buildAudioFormatSelector(quality: string): string {
   return `${selectedFormatId}/${BEST_AUDIO_SELECTOR}`;
 }
 
+/** Keep app behavior independent from user-level yt-dlp configuration. */
+export function buildNetworkIsolationArgs(forceIpv4 = false): string[] {
+  return forceIpv4
+    ? ['--ignore-config', '--force-ipv4']
+    : ['--ignore-config'];
+}
+
+/** Identify DNS failures that are worth retrying over IPv4. */
+export function isDnsResolutionError(error: Error | string): boolean {
+  const message = typeof error === 'string' ? error : error.message;
+  return /could not resolve host|temporary failure in name resolution|getaddrinfo failed|name or service not known|enotfound/i.test(message);
+}
+
 function getPlaylistEntryUrl(entry: YtDlpPlaylistEntryMetadata): string | null {
   const candidates = [entry.webpage_url, entry.original_url, entry.url];
 
@@ -202,6 +215,7 @@ export interface YtDlpExecutor {
  */
 export class YtDlpExecutorImpl implements YtDlpExecutor {
   private processes: Map<number, ChildProcess> = new Map();
+  private forceIpv4Hosts = new Set<string>();
   private ytDlpCommand: string = 'yt-dlp'; // Default to system yt-dlp
   private ffmpegLocation: string | null = null; // ffmpeg directory path
 
@@ -273,17 +287,25 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   async fetchMetadata(url: string): Promise<Video> {
     const maxRetries = 3;
     let lastError: Error | null = null;
+    let forceIpv4 = this.shouldForceIpv4(url);
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.debug(`Metadata fetch attempt ${attempt}/${maxRetries} for:`, url);
         
-        const video = await this.fetchMetadataAttempt(url, attempt);
+        const video = await this.fetchMetadataAttempt(url, attempt, forceIpv4);
+        if (forceIpv4) {
+          this.rememberIpv4Host(url);
+        }
         this.debug(`Metadata fetch successful on attempt ${attempt}`);
         return video;
       } catch (error) {
         lastError = error as Error;
         this.debug(`Metadata fetch attempt ${attempt} failed:`, lastError.message);
+
+        if (isDnsResolutionError(lastError)) {
+          forceIpv4 = true;
+        }
         
         // If it's a bot detection error, wait longer between retries
         if (lastError.message.includes('not a bot') || lastError.message.includes('Sign in')) {
@@ -308,14 +330,14 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   /**
    * Single attempt to fetch metadata
    */
-  private async fetchMetadataAttempt(url: string, attempt: number): Promise<Video> {
+  private async fetchMetadataAttempt(url: string, attempt: number, forceIpv4: boolean): Promise<Video> {
     return new Promise((resolve, reject) => {
       this.debug('Starting yt-dlp metadata fetch for:', url);
       this.debug('yt-dlp command:', this.ytDlpCommand);
       this.debug('ffmpeg location:', this.ffmpegLocation);
       
       // Build command arguments with anti-bot measures
-      const args = ['--dump-json'];
+      const args = [...buildNetworkIsolationArgs(forceIpv4), '--dump-json'];
       
       // Different strategies for different attempts
       if (attempt === 1) {
@@ -435,7 +457,13 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
           // Provide more specific error messages for bot detection
           let errorMessage = 'Failed to fetch video information';
           
-          if (errorOutput.includes('Sign in to confirm') || errorOutput.includes('not a bot')) {
+          if (isDnsResolutionError(errorOutput)) {
+            const detail = errorOutput.split('\n')
+              .find(line => isDnsResolutionError(line))
+              ?.replace('ERROR:', '')
+              .trim();
+            errorMessage = detail || 'DNS resolution failed while contacting the video website';
+          } else if (errorOutput.includes('Sign in to confirm') || errorOutput.includes('not a bot')) {
             errorMessage = 'YouTube is asking to verify you are not a bot. This is a temporary issue. Please try again in a few minutes or try a different video.';
           } else if (errorOutput.includes('Video unavailable')) {
             errorMessage = 'Video is unavailable or private';
@@ -492,7 +520,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       this.debug('ffmpeg location:', this.ffmpegLocation);
       
       // Build yt-dlp command arguments
-      const args = [];
+      const args = buildNetworkIsolationArgs(this.shouldForceIpv4(url));
 
       // Format selection based on type
       if (format === 'mp3') {
@@ -675,6 +703,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   async fetchPlaylist(url: string): Promise<PlaylistInfo> {
     return new Promise((resolve, reject) => {
       const args = [
+        ...buildNetworkIsolationArgs(this.shouldForceIpv4(url)),
         '--dump-single-json',
         '--flat-playlist',
         '--yes-playlist',
@@ -768,6 +797,22 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         this.processes.delete(pid);
       }
     }, 5000);
+  }
+
+  private shouldForceIpv4(url: string): boolean {
+    try {
+      return this.forceIpv4Hosts.has(new URL(url).hostname.toLowerCase());
+    } catch {
+      return false;
+    }
+  }
+
+  private rememberIpv4Host(url: string): void {
+    try {
+      this.forceIpv4Hosts.add(new URL(url).hostname.toLowerCase());
+    } catch {
+      // URL validation happens before metadata extraction.
+    }
   }
 
   private extractFormats(formats: YtDlpFormat[]): Format[] {

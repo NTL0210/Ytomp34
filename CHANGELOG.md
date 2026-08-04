@@ -5,6 +5,23 @@ All notable changes to Ytomp34 will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Assisted NSIS installer with an explicit installation-directory chooser
+- NSIS-compatible in-app updates while retaining the legacy Squirrel update
+  path for a transition release
+
+### Changed
+- Isolated app downloads from user-level yt-dlp configuration files
+- Retry DNS resolution failures over IPv4 and remember the successful host
+  strategy for the subsequent download
+- Safely refresh bundled yt-dlp versions older than the required extractor fix
+
+### Fixed
+- Display the detailed backend error instead of replacing every network-related
+  failure with a generic internet-connection message
+
 ## [1.1.0] - 2026-08-03
 
 ### Added

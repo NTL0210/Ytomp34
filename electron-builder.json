@@ -2,17 +2,19 @@
   "appId": "com.ytomp34.app",
   "productName": "Ytomp34",
   "directories": {
-    "output": "dist",
+    "output": "build/installer",
     "buildResources": "assets"
   },
+  "asar": false,
   "files": [
     "dist/electron/**/*",
     "dist/renderer/**/*",
     "package.json"
   ],
   "win": {
-    "target": "dir",
-    "icon": "assets/icon.ico"
+    "target": "nsis",
+    "icon": "assets/icon.ico",
+    "artifactName": "${productName}-${version}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,
@@ -26,7 +28,9 @@
     "installerHeaderIcon": "assets/icon.ico",
     "deleteAppDataOnUninstall": false
   },
-  "portable": {
-    "artifactName": "${productName}-${version}-portable.${ext}"
+  "publish": {
+    "provider": "github",
+    "owner": "NTL0210",
+    "repo": "Ytomp34"
   }
 }

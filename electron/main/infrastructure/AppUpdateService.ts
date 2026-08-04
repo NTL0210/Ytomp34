@@ -1,4 +1,5 @@
-import { app, autoUpdater, net } from 'electron';
+import { app, autoUpdater as squirrelAutoUpdater, net } from 'electron';
+import type { AppUpdater, UpdateDownloadedEvent } from 'electron-updater';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from './Logger';
@@ -85,7 +86,9 @@ export function isNewerVersion(candidate: string, current: string): boolean {
 
 export class AppUpdateService {
   private status: AppUpdateStatus;
-  private listenersRegistered = false;
+  private squirrelListenersRegistered = false;
+  private nsisListenersRegistered = false;
+  private nsisAutoUpdater: AppUpdater | null = null;
 
   constructor(
     private logger: Logger,
@@ -114,7 +117,7 @@ export class AppUpdateService {
       });
     }
 
-    if (!this.isSquirrelInstalled()) {
+    if (!this.isSquirrelInstalled() && !this.isNsisInstalled()) {
       return this.updateStatus({
         state: 'unsupported',
         error: 'Install Ytomp34 with Setup.exe to enable automatic updates.'
@@ -199,13 +202,21 @@ export class AppUpdateService {
       });
     }
 
-    this.registerAutoUpdaterListeners();
-    const feedUrl = `https://update.electronjs.org/${UPDATE_REPOSITORY}/${process.platform}-${process.arch}/${app.getVersion()}`;
-
     try {
-      autoUpdater.setFeedURL({ url: feedUrl });
       this.updateStatus({ state: 'downloading', error: undefined });
-      await autoUpdater.checkForUpdates();
+
+      if (this.isSquirrelInstalled()) {
+        this.registerSquirrelUpdaterListeners();
+        const feedUrl = `https://update.electronjs.org/${UPDATE_REPOSITORY}/${process.platform}-${process.arch}/${app.getVersion()}`;
+        squirrelAutoUpdater.setFeedURL({ url: feedUrl });
+        await squirrelAutoUpdater.checkForUpdates();
+      } else {
+        const updater = await this.getNsisAutoUpdater();
+        this.registerNsisUpdaterListeners(updater);
+        updater.autoDownload = true;
+        await updater.checkForUpdates();
+      }
+
       return this.getStatus();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to download the update.';
@@ -229,31 +240,46 @@ export class AppUpdateService {
       });
     }
 
+    const useSquirrel = this.isSquirrelInstalled();
+    const nsisUpdater = useSquirrel ? null : this.nsisAutoUpdater;
+    if (!useSquirrel && !nsisUpdater) {
+      return this.updateStatus({
+        state: 'error',
+        error: 'The NSIS update service is not ready. Download the update again.'
+      });
+    }
+
     this.logger.info('Installing downloaded application update');
     this.updateStatus({ state: 'downloaded', error: undefined });
-    setImmediate(() => autoUpdater.quitAndInstall());
+    setImmediate(() => {
+      if (useSquirrel) {
+        squirrelAutoUpdater.quitAndInstall();
+      } else {
+        nsisUpdater!.quitAndInstall(false, true);
+      }
+    });
     return this.getStatus();
   }
 
-  private registerAutoUpdaterListeners(): void {
-    if (this.listenersRegistered) {
+  private registerSquirrelUpdaterListeners(): void {
+    if (this.squirrelListenersRegistered) {
       return;
     }
 
-    this.listenersRegistered = true;
+    this.squirrelListenersRegistered = true;
 
-    autoUpdater.on('update-available', () => {
+    squirrelAutoUpdater.on('update-available', () => {
       this.updateStatus({ state: 'downloading', error: undefined });
     });
 
-    autoUpdater.on('update-not-available', () => {
+    squirrelAutoUpdater.on('update-not-available', () => {
       this.updateStatus({
         state: 'error',
         error: 'The release does not contain a compatible Windows update package yet.'
       });
     });
 
-    autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName) => {
+    squirrelAutoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName) => {
       this.updateStatus({
         state: 'downloaded',
         releaseName: releaseName || this.status.releaseName,
@@ -264,8 +290,43 @@ export class AppUpdateService {
       });
     });
 
-    autoUpdater.on('error', (error) => {
+    squirrelAutoUpdater.on('error', (error) => {
       this.logger.error('Application auto-updater error', error);
+      this.updateStatus({ state: 'error', error: error.message });
+    });
+  }
+
+  private registerNsisUpdaterListeners(updater: AppUpdater): void {
+    if (this.nsisListenersRegistered) {
+      return;
+    }
+
+    this.nsisListenersRegistered = true;
+
+    updater.on('update-available', () => {
+      this.updateStatus({ state: 'downloading', error: undefined });
+    });
+
+    updater.on('update-not-available', () => {
+      this.updateStatus({
+        state: 'error',
+        error: 'The release does not contain a compatible Windows update package yet.'
+      });
+    });
+
+    updater.on('update-downloaded', (info: UpdateDownloadedEvent) => {
+      this.updateStatus({
+        state: 'downloaded',
+        releaseName: info.releaseName || this.status.releaseName,
+        releaseNotes: typeof info.releaseNotes === 'string'
+          ? info.releaseNotes.slice(0, MAX_RELEASE_NOTES_LENGTH)
+          : this.status.releaseNotes,
+        error: undefined
+      });
+    });
+
+    updater.on('error', (error: Error) => {
+      this.logger.error('NSIS application auto-updater error', error);
       this.updateStatus({ state: 'error', error: error.message });
     });
   }
@@ -280,6 +341,21 @@ export class AppUpdateService {
   private isSquirrelInstalled(): boolean {
     const updateExecutable = path.resolve(path.dirname(process.execPath), '..', 'Update.exe');
     return fs.existsSync(updateExecutable);
+  }
+
+  private isNsisInstalled(): boolean {
+    return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'));
+  }
+
+  private async getNsisAutoUpdater(): Promise<AppUpdater> {
+    if (!this.nsisAutoUpdater) {
+      // Load lazily so a transition release can still support existing
+      // Squirrel installations while new installs use NSIS.
+      const updaterModule = await import('electron-updater');
+      this.nsisAutoUpdater = updaterModule.autoUpdater;
+    }
+
+    return this.nsisAutoUpdater;
   }
 
   private updateStatus(changes: Partial<AppUpdateStatus>): AppUpdateStatus {

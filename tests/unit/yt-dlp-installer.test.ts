@@ -8,7 +8,24 @@ jest.mock('electron', () => ({
 }));
 
 import { FileLogger } from '../../electron/main/infrastructure/Logger';
-import { YtDlpInstaller } from '../../electron/main/infrastructure/YtDlpInstaller';
+import {
+  isYtDlpVersionOlderThan,
+  YtDlpInstaller
+} from '../../electron/main/infrastructure/YtDlpInstaller';
+
+describe('yt-dlp version policy', () => {
+  it('recognizes a release older than the required extractor fixes', () => {
+    expect(isYtDlpVersionOlderThan('2026.03.17', '2026.06.09')).toBe(true);
+  });
+
+  it.each(['2026.06.09', '2026.07.01'])('accepts supported version %s', version => {
+    expect(isYtDlpVersionOlderThan(version, '2026.06.09')).toBe(false);
+  });
+
+  it('does not replace an unrecognized custom build automatically', () => {
+    expect(isYtDlpVersionOlderThan('nightly@abc123', '2026.06.09')).toBe(false);
+  });
+});
 
 interface InstallerInternals {
   ytDlpPath: string;

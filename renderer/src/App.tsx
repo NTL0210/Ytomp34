@@ -63,7 +63,10 @@ export const App: React.FC = () => {
         {/* Error notification */}
         {error && (
           <ErrorNotification
-            error={getErrorDisplay(error.type)}
+            error={{
+              ...getErrorDisplay(error.type),
+              message: error.message || getErrorDisplay(error.type).message
+            }}
             onDismiss={() => setError(null)}
           />
         )}

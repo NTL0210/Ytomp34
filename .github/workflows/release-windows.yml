@@ -62,9 +62,14 @@ jobs:
       - name: Generate SHA-256 checksums
         shell: pwsh
         run: |
-          $artifacts = Get-ChildItem -LiteralPath 'build/installer' -File |
-            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
-            Sort-Object Name
+          $artifacts = @(
+            Get-ChildItem -LiteralPath 'build/installer' -Filter 'Ytomp34-*-Setup.exe' -File
+            Get-ChildItem -LiteralPath 'build/installer' -Filter 'Ytomp34-*-Setup.exe.blockmap' -File
+            Get-Item -LiteralPath 'build/installer/latest.yml'
+          ) | Sort-Object Name
+          if ($artifacts.Count -ne 3) {
+            throw 'Expected NSIS release artifacts were not found'
+          }
           $checksums = $artifacts | ForEach-Object {
             $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
@@ -79,8 +84,8 @@ jobs:
           $packageVersion = node -p "require('./package.json').version"
           $releaseFiles = @(
             (Get-ChildItem -LiteralPath 'build/installer' -Filter 'Ytomp34-*-Setup.exe' -File).FullName
-            (Get-ChildItem -LiteralPath 'build/installer' -Filter 'ytomp34-*-full.nupkg' -File).FullName
-            (Resolve-Path -LiteralPath 'build/installer/RELEASES').Path
+            (Get-ChildItem -LiteralPath 'build/installer' -Filter 'Ytomp34-*-Setup.exe.blockmap' -File).FullName
+            (Resolve-Path -LiteralPath 'build/installer/latest.yml').Path
             (Resolve-Path -LiteralPath 'build/installer/SHA256SUMS.txt').Path
           )
           if ($releaseFiles.Count -ne 4 -or $releaseFiles -contains $null) {

@@ -11,6 +11,19 @@ import { spawn } from 'child_process';
 import { app } from 'electron';
 import { FileLogger } from './Logger';
 
+export const MIN_SUPPORTED_YT_DLP_VERSION = '2026.06.09';
+
+export function isYtDlpVersionOlderThan(version: string | undefined, minimum: string): boolean {
+  const normalize = (value: string | undefined): number | null => {
+    const match = value?.trim().match(/^(\d{4})\.(\d{2})\.(\d{2})/);
+    return match ? Number(`${match[1]}${match[2]}${match[3]}`) : null;
+  };
+
+  const currentValue = normalize(version);
+  const minimumValue = normalize(minimum);
+  return currentValue !== null && minimumValue !== null && currentValue < minimumValue;
+}
+
 export class YtDlpInstaller {
   private logger: FileLogger;
   private ytDlpPath: string;

@@ -21,6 +21,8 @@ import {
   QueuePersistence,
   ErrorCategorizer,
   YtDlpInstaller,
+  MIN_SUPPORTED_YT_DLP_VERSION,
+  isYtDlpVersionOlderThan,
   FfmpegInstaller,
   handleSquirrelStartup,
   AppUpdateService
@@ -188,7 +190,25 @@ class Application {
           const { installed: bundledInstalled, version: bundledVersion } = await ytDlpExecutor.checkInstallation();
           
           if (bundledInstalled) {
-            logger.info('Using bundled yt-dlp', { version: bundledVersion, path: bundledPath });
+            if (isYtDlpVersionOlderThan(bundledVersion, MIN_SUPPORTED_YT_DLP_VERSION)) {
+              logger.info('Bundled yt-dlp is outdated, updating safely...', {
+                version: bundledVersion,
+                minimumVersion: MIN_SUPPORTED_YT_DLP_VERSION
+              });
+              const updateResult = await ytDlpInstaller.update();
+
+              if (updateResult.success) {
+                const { version: updatedVersion } = await ytDlpExecutor.checkInstallation();
+                logger.info('Bundled yt-dlp updated', { version: updatedVersion, path: bundledPath });
+              } else {
+                logger.error(
+                  'Bundled yt-dlp update failed; continuing with the existing working version',
+                  new Error(updateResult.error || 'Unknown update error')
+                );
+              }
+            } else {
+              logger.info('Using bundled yt-dlp', { version: bundledVersion, path: bundledPath });
+            }
           } else {
             logger.error('Bundled yt-dlp exists but not working, re-downloading...');
             const result = await ytDlpInstaller.install();

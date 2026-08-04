@@ -22,7 +22,8 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build:win": "npm run build && node package-app.js",
-    "build:installer": "npm run build:win && node scripts/create-windows-installer.cjs",
+    "build:installer": "npm run build && node scripts/clean-installer-output.cjs && electron-builder --win nsis --config electron-builder.json",
+    "build:legacy-installer": "npm run build:win && node scripts/create-windows-installer.cjs",
     "test": "jest",
     "test:electron-smoke": "electron ./scripts/electron-smoke.cjs",
     "test:watch": "jest --watch",
@@ -30,6 +31,8 @@
     "lint": "eslint . --ext .ts,.tsx"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
+    "js-yaml": "4.3.0",
     "lucide-react": "^0.294.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -48,6 +51,7 @@
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
     "electron": "42.7.1",
+    "electron-builder": "^26.15.3",
     "electron-packager": "^17.1.2",
     "electron-winstaller": "5.4.4",
     "eslint": "^8.56.0",
