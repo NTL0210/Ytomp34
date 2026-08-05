@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Ytomp34 logo](assets/icon.ico)
+![Ytomp34 logo](assets/icon.png)
 
 **A desktop video and audio downloader built with Electron, React, TypeScript, yt-dlp, and ffmpeg.**
 
@@ -22,7 +22,9 @@
 - Cancel pending or active downloads.
 - Save settings and restore queued tasks after an app restart.
 - Automatically install bundled yt-dlp and ffmpeg when required.
+- Automatically install Deno for full YouTube quality extraction.
 - Use light or dark themes.
+- Show an optional donation QR dialog from the application header.
 
 Pause and resume controls rely on Unix process signals and are therefore only
 available on macOS and Linux. They are hidden in the current Windows build.

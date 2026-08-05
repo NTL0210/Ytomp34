@@ -1,42 +1,13 @@
-# Application Icon
+# Application Assets
 
-## icon.ico
+- `icon.png` is the source application logo used by the renderer and window.
+- `icon.ico` is generated from `icon.png` for Windows executables and installers.
+- `donation.jpg` is displayed only when the user opens the donation dialog.
 
-The application icon should be placed in this directory as `icon.ico`.
+Regenerate the Windows icon after replacing `icon.png`:
 
-### Requirements:
-- Format: ICO (Windows Icon)
-- Size: 256x256 pixels (recommended)
-- Multiple sizes embedded: 16x16, 32x32, 48x48, 64x64, 128x128, 256x256
+```powershell
+.\scripts\create-icon.ps1
+```
 
-### How to create:
-
-1. **Using online tools:**
-   - Visit https://www.icoconverter.com/
-   - Upload a PNG image (256x256 or larger)
-   - Select all icon sizes
-   - Download the generated .ico file
-
-2. **Using GIMP:**
-   - Open your image in GIMP
-   - Resize to 256x256 (Image → Scale Image)
-   - Export as .ico (File → Export As → icon.ico)
-   - Select multiple sizes in export dialog
-
-3. **Using ImageMagick:**
-   ```bash
-   convert icon.png -define icon:auto-resize=256,128,64,48,32,16 icon.ico
-   ```
-
-### Placeholder Icon
-
-For development purposes, a placeholder icon has been created. Replace it with your actual application icon before production release.
-
-### Icon Design Guidelines:
-
-- Use simple, recognizable shapes
-- Ensure visibility at small sizes (16x16)
-- Use high contrast colors
-- Avoid fine details that won't be visible when scaled down
-- Consider the Windows taskbar and system tray appearance
-- Test on both light and dark backgrounds
+The script embeds 16, 24, 32, 48, 64, 128, and 256 pixel PNG frames in `icon.ico`.

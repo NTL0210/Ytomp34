@@ -4,7 +4,7 @@ import { PlaylistInfo, Video } from '../domain/entities';
 import { Format, Quality } from '../domain/value-objects';
 import { ProgressData, ProgressParserImpl } from './ProgressParser';
 
-interface YtDlpFormat {
+export interface YtDlpFormat {
   format_id?: string;
   ext?: string;
   vcodec?: string;
@@ -49,6 +49,73 @@ interface YtDlpPlaylistMetadata {
 export const MAX_PLAYLIST_ITEMS = 100;
 
 const BEST_AUDIO_SELECTOR = 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio';
+
+export function buildJavaScriptRuntimeArgs(runtimePath: string | null): string[] {
+  if (!runtimePath) return [];
+
+  return [
+    '--js-runtimes',
+    `deno:${runtimePath}`,
+    '--remote-components',
+    'ejs:github'
+  ];
+}
+
+export function extractAvailableFormats(formats: YtDlpFormat[]): Format[] {
+  const videoHeights = new Set<number>();
+  const audioFormats: YtDlpFormat[] = [];
+
+  for (const format of formats) {
+    if (format.vcodec && format.vcodec !== 'none' && format.height) {
+      videoHeights.add(format.height);
+    }
+
+    if (
+      format.acodec &&
+      format.acodec !== 'none' &&
+      (!format.vcodec || format.vcodec === 'none')
+    ) {
+      audioFormats.push(format);
+    }
+  }
+
+  const result: Format[] = [];
+  const sortedHeights = Array.from(videoHeights).sort((a, b) => b - a);
+
+  if (sortedHeights.length > 0) {
+    const qualities: Quality[] = [
+      { label: 'Best Quality', value: 'best', resolution: 'best' },
+      ...sortedHeights.map(height => ({
+        label: `${height}p`,
+        value: `${height}p`,
+        resolution: `${height}p`
+      }))
+    ];
+    result.push({ type: 'mp4', qualities });
+  }
+
+  const audioQualities: Quality[] = audioFormats
+    .filter(format => Boolean(format.abr))
+    .sort((a, b) => (b.abr || 0) - (a.abr || 0))
+    .slice(0, 5)
+    .map(format => ({
+      label: `${Math.round(format.abr ?? 0)}kbps`,
+      value: format.format_id ?? 'best',
+      bitrate: format.abr
+    }));
+
+  if (audioQualities.length > 0) {
+    result.push({
+      type: 'mp3',
+      qualities: [
+        { label: 'Best Quality', value: 'best' },
+        ...audioQualities
+      ]
+    });
+  }
+
+  return result;
+}
 
 /**
  * Build a conservative audio selector from a format id returned by yt-dlp.
@@ -218,6 +285,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   private forceIpv4Hosts = new Set<string>();
   private ytDlpCommand: string = 'yt-dlp'; // Default to system yt-dlp
   private ffmpegLocation: string | null = null; // ffmpeg directory path
+  private javaScriptRuntimePath: string | null = null;
 
   private debug(...args: unknown[]): void {
     if (!app.isPackaged) {
@@ -237,6 +305,10 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
    */
   setFfmpegLocation(path: string): void {
     this.ffmpegLocation = path;
+  }
+
+  setJavaScriptRuntimePath(path: string): void {
+    this.javaScriptRuntimePath = path;
   }
 
   async checkInstallation(): Promise<{ installed: boolean; version?: string }> {
@@ -337,7 +409,11 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       this.debug('ffmpeg location:', this.ffmpegLocation);
       
       // Build command arguments with anti-bot measures
-      const args = [...buildNetworkIsolationArgs(forceIpv4), '--dump-json'];
+      const args = [
+        ...buildNetworkIsolationArgs(forceIpv4),
+        ...buildJavaScriptRuntimeArgs(this.javaScriptRuntimePath),
+        '--dump-json'
+      ];
       
       // Different strategies for different attempts
       if (attempt === 1) {
@@ -521,6 +597,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
       
       // Build yt-dlp command arguments
       const args = buildNetworkIsolationArgs(this.shouldForceIpv4(url));
+      args.push(...buildJavaScriptRuntimeArgs(this.javaScriptRuntimePath));
 
       // Format selection based on type
       if (format === 'mp3') {
@@ -704,6 +781,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
     return new Promise((resolve, reject) => {
       const args = [
         ...buildNetworkIsolationArgs(this.shouldForceIpv4(url)),
+        ...buildJavaScriptRuntimeArgs(this.javaScriptRuntimePath),
         '--dump-single-json',
         '--flat-playlist',
         '--yes-playlist',
@@ -816,101 +894,10 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
   }
 
   private extractFormats(formats: YtDlpFormat[]): Format[] {
-    // Extract MP4 and MP3 formats with qualities
-    // For MP4: We need to identify video formats that can be merged with audio
-    // YouTube typically has separate video and audio streams for high quality
-    
-    const videoFormats: Map<number, YtDlpFormat> = new Map(); // height -> format
-    const audioFormats: YtDlpFormat[] = [];
-    
-    formats.forEach(f => {
-      // Video formats (has video codec, may or may not have audio)
-      if (f.vcodec && f.vcodec !== 'none' && f.height) {
-        // Store best format for each height
-        const existing = videoFormats.get(f.height);
-        if (!existing || (f.tbr && existing.tbr && f.tbr > existing.tbr)) {
-          videoFormats.set(f.height, {
-            height: f.height,
-            format_id: f.format_id,
-            ext: f.ext,
-            tbr: f.tbr, // total bitrate
-            vcodec: f.vcodec,
-            acodec: f.acodec,
-            format_note: f.format_note
-          });
-        }
-      }
-      
-      // Audio-only formats
-      if (f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')) {
-        audioFormats.push({
-          format_id: f.format_id,
-          abr: f.abr, // audio bitrate
-          ext: f.ext,
-          acodec: f.acodec
-        });
-      }
-    });
-    
-    const result: Format[] = [];
-    
-    // Build MP4 quality options from video formats
-    if (videoFormats.size > 0) {
-      // Sort by height descending (highest quality first)
-      const sortedHeights = Array.from(videoFormats.keys()).sort((a, b) => b - a);
-      
-      const mp4Qualities: Quality[] = sortedHeights.map(height => {
-        return {
-          label: `${height}p`,
-          value: `${height}p`, // Use height as value (e.g., "1080p")
-          resolution: `${height}p`
-        };
-      });
-      
-      // Add "best" option at the top
-      mp4Qualities.unshift({
-        label: 'Best Quality',
-        value: 'best',
-        resolution: 'best'
-      });
-      
-      result.push({
-        type: 'mp4',
-        qualities: mp4Qualities
-      });
-    }
-    
-    // Build MP3 quality options from audio formats
-    if (audioFormats.length > 0) {
-      // Sort by bitrate descending (highest quality first)
-      const sortedAudio = audioFormats
-        .filter(f => f.abr) // Only include formats with known bitrate
-        .sort((a, b) => (b.abr || 0) - (a.abr || 0));
-      
-      const mp3Qualities: Quality[] = sortedAudio.slice(0, 5).map(format => ({
-        label: `${Math.round(format.abr ?? 0)}kbps`,
-        value: format.format_id ?? 'best',
-        bitrate: format.abr
-      }));
-      
-      // Add "best" option if we have audio formats
-      if (mp3Qualities.length > 0) {
-        mp3Qualities.unshift({
-          label: 'Best Quality',
-          value: 'best',
-          bitrate: undefined
-        });
-      }
-      
-      result.push({
-        type: 'mp3',
-        qualities: mp3Qualities
-      });
-    }
+    const result = extractAvailableFormats(formats);
     
     this.debug('Extracted formats:', {
-      videoFormatsCount: videoFormats.size,
-      audioFormatsCount: audioFormats.length,
+      sourceFormatCount: formats.length,
       result
     });
     

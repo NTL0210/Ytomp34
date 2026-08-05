@@ -16,6 +16,7 @@ export {
   isYtDlpVersionOlderThan
 } from './YtDlpInstaller';
 export { FfmpegInstaller } from './FfmpegInstaller';
+export { DenoInstaller, getDenoReleaseAsset } from './DenoInstaller';
 export { getSquirrelAction, handleSquirrelStartup } from './SquirrelStartup';
 export {
   AppUpdateService,

@@ -15,6 +15,7 @@ import { VideoInfo } from './components/VideoInfo';
 import { FormatSelector } from './components/FormatSelector';
 import { DownloadQueue } from './components/DownloadQueue';
 import { Settings } from './components/Settings';
+import { Donation } from './components/Donation';
 import { ErrorNotification } from './components/ErrorNotification';
 import { getErrorDisplay } from './constants/errorMessages';
 
@@ -46,12 +47,16 @@ export const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            Ytomp34
-          </h1>
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <img src="./icon.png" alt="" className="h-9 w-9 sm:h-10 sm:w-10 flex-shrink-0" />
+            <h1 className="truncate text-xl sm:text-2xl font-bold text-gray-900 dark:text-gray-100">
+              Ytomp34
+            </h1>
+          </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <Donation />
             <Settings />
             <ThemeToggle />
           </div>

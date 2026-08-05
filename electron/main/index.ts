@@ -24,6 +24,7 @@ import {
   MIN_SUPPORTED_YT_DLP_VERSION,
   isYtDlpVersionOlderThan,
   FfmpegInstaller,
+  DenoInstaller,
   handleSquirrelStartup,
   AppUpdateService
 } from './infrastructure';
@@ -170,9 +171,10 @@ class Application {
     const ytDlpExecutor = this.container.resolve<YtDlpExecutorImpl>('ytDlpExecutor');
     const ytDlpInstaller = new YtDlpInstaller(logger);
     const ffmpegInstaller = new FfmpegInstaller(logger);
+    const denoInstaller = new DenoInstaller(logger);
 
     try {
-      logger.info('Checking yt-dlp and ffmpeg installation...');
+      logger.info('Checking yt-dlp, JavaScript runtime, and ffmpeg installation...');
 
       // First check if yt-dlp is in system PATH
       logger.info('Checking system yt-dlp...');
@@ -244,6 +246,24 @@ class Application {
         }
       } else {
         logger.info('yt-dlp is installed in system PATH', { version });
+      }
+
+      // Full YouTube format extraction requires a JavaScript runtime.
+      logger.info('Checking Deno JavaScript runtime...');
+      if (!denoInstaller.isInstalled()) {
+        const result = await denoInstaller.install();
+        if (!result.success) {
+          logger.error(
+            'Failed to install Deno; some YouTube qualities may be unavailable',
+            new Error(result.error || 'Unknown error')
+          );
+        }
+      }
+
+      if (denoInstaller.isInstalled()) {
+        const denoPath = denoInstaller.getExecutablePath();
+        ytDlpExecutor.setJavaScriptRuntimePath(denoPath);
+        logger.info('Using bundled Deno runtime for yt-dlp', { path: denoPath });
       }
 
       // Check and install ffmpeg
@@ -378,9 +398,14 @@ class Application {
       nodeEnv: process.env.NODE_ENV
     });
 
+    const appIconPath = app.isPackaged
+      ? path.join(app.getAppPath(), 'dist', 'renderer', 'icon.png')
+      : path.join(app.getAppPath(), 'assets', 'icon.png');
+
     this.mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
+      icon: appIconPath,
       webPreferences: {
         contextIsolation: true,      // CRITICAL: Isolate renderer context
         nodeIntegration: false,       // CRITICAL: Disable Node.js in renderer

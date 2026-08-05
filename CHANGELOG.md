@@ -5,6 +5,18 @@ All notable changes to Ytomp34 will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-08-05
+
+### Added
+- Bundled Deno JavaScript runtime installation for full yt-dlp YouTube format
+  extraction
+- Donation dialog using the provided Vietcombank QR image
+- New application branding in the title bar, header, executable, and installer
+
+### Fixed
+- Restore selectable 720p and 1080p qualities when those streams are available
+- Preserve adaptive video-only qualities so yt-dlp can merge them with audio
+
 ## [1.2.0] - 2026-08-04
 
 ### Added

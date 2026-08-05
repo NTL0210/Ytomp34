@@ -1,7 +1,7 @@
 {
   "name": "ytomp34",
   "productName": "Ytomp34",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Cross-platform video/audio downloader with queue management",
   "main": "dist/electron/main/index.js",
