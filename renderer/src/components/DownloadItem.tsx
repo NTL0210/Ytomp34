@@ -8,256 +8,268 @@
 
 import React from 'react';
 import {
-  AlertCircle,
-  CheckCircle,
-  Clock,
-  ExternalLink,
-  FolderOpen,
-  Pause,
-  Play,
-  RotateCcw,
-  Trash2,
-  X
+    AlertCircle,
+    CheckCircle,
+    Clock,
+    ExternalLink,
+    FolderOpen,
+    Pause,
+    Play,
+    RotateCcw,
+    Trash2,
+    X,
+    Info
 } from 'lucide-react';
 import { useIPC } from '../hooks/useIPC';
 
 interface DownloadTask {
-  readonly id: string;
-  readonly url: string;
-  readonly videoTitle: string;
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error';
-  progress: number;
-  speed: string;
-  eta: string;
-  readonly filePath: string;
-  readonly selectedFormat: 'mp4' | 'mp3';
-  readonly selectedQuality: string;
-  retryCount: number;
-  errorMessage?: string;
-  readonly createdAt: Date;
-  updatedAt: Date;
-  processId?: number;
+    readonly id: string;
+    readonly url: string;
+    readonly videoTitle: string;
+    status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error';
+    progress: number;
+    speed: string;
+    eta: string;
+    readonly filePath: string;
+    readonly selectedFormat: 'mp4' | 'mp3';
+    readonly selectedQuality: string;
+    retryCount: number;
+    errorMessage?: string;
+    readonly createdAt: Date;
+    updatedAt: Date;
+    processId?: number;
 }
 
 interface DownloadItemProps {
-  task: DownloadTask;
+    task: DownloadTask;
 }
 
 export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
-  const {
-    pauseDownload,
-    resumeDownload,
-    cancelDownload,
-    retryDownload,
-    openDownloadedFile,
-    showDownloadedFile,
-    removeHistoryItem,
-    startDownload
-  } = useIPC();
-  const supportsPause = window.electronAPI.platform !== 'win32';
+    const {
+        pauseDownload,
+        resumeDownload,
+        cancelDownload,
+        retryDownload,
+        openDownloadedFile,
+        showDownloadedFile,
+        removeHistoryItem,
+        startDownload
+    } = useIPC();
+    const isWindows = window.electronAPI.platform === 'win32';
 
-  const handlePause = () => {
-    pauseDownload(task.id);
-  };
+    const handlePause = () => {
+        if (!isWindows) pauseDownload(task.id);
+    };
 
-  const handleResume = () => {
-    resumeDownload(task.id);
-  };
+    const handleResume = () => {
+        if (!isWindows) resumeDownload(task.id);
+    };
 
-  const handleCancel = () => {
-    cancelDownload(task.id);
-  };
+    const handleCancel = () => {
+        cancelDownload(task.id);
+    };
 
-  const handleDownloadAgain = () => {
-    startDownload(task.url, task.videoTitle, task.selectedFormat, task.selectedQuality);
-  };
+    const handleDownloadAgain = () => {
+        startDownload(task.url, task.videoTitle, task.selectedFormat, task.selectedQuality);
+    };
 
-  // Get status icon and color
-  const getStatusDisplay = () => {
-    switch (task.status) {
-      case 'completed':
-        return {
-          icon: <CheckCircle className="w-5 h-5 text-green-600" />,
-          color: 'text-green-600 dark:text-green-400',
-          label: 'Completed',
-        };
-      case 'error':
-        return {
-          icon: <AlertCircle className="w-5 h-5 text-red-600" />,
-          color: 'text-red-600 dark:text-red-400',
-          label: `Error (Retry ${task.retryCount}/3)`,
-        };
-      case 'paused':
-        return {
-          icon: <Pause className="w-5 h-5 text-yellow-600" />,
-          color: 'text-yellow-600 dark:text-yellow-400',
-          label: 'Paused',
-        };
-      case 'pending':
-        return {
-          icon: <Clock className="w-5 h-5 text-gray-600" />,
-          color: 'text-gray-600 dark:text-gray-400',
-          label: 'Pending',
-        };
-      case 'downloading':
-      default:
-        return {
-          icon: null,
-          color: 'text-blue-600 dark:text-blue-400',
-          label: 'Downloading',
-        };
-    }
-  };
+    // Get status icon and color
+    const getStatusDisplay = () => {
+        switch (task.status) {
+            case 'completed':
+                return {
+                    icon: <CheckCircle className="w-5 h-5 text-green-600" />,
+                    color: 'text-green-600 dark:text-green-400',
+                    label: 'Completed',
+                };
+            case 'error':
+                return {
+                    icon: <AlertCircle className="w-5 h-5 text-red-600" />,
+                    color: 'text-red-600 dark:text-red-400',
+                    label: `Error (Retry ${task.retryCount}/3)`,
+                };
+            case 'paused':
+                return {
+                    icon: <Pause className="w-5 h-5 text-yellow-600" />,
+                    color: 'text-yellow-600 dark:text-yellow-400',
+                    label: 'Paused',
+                };
+            case 'pending':
+                return {
+                    icon: <Clock className="w-5 h-5 text-gray-600" />,
+                    color: 'text-gray-600 dark:text-gray-400',
+                    label: 'Pending',
+                };
+            case 'downloading':
+            default:
+                return {
+                    icon: null,
+                    color: 'text-blue-600 dark:text-blue-400',
+                    label: 'Downloading',
+                };
+        }
+    };
 
-  const statusDisplay = getStatusDisplay();
+    const statusDisplay = getStatusDisplay();
 
-  return (
-    <div className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-3">
-        <div className="flex-1 min-w-0">
-          <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-            {task.videoTitle}
-          </h4>
-          <div className="flex items-center gap-2 mt-1">
-            {statusDisplay.icon}
-            <span className={`text-xs font-medium ${statusDisplay.color}`}>
-              {statusDisplay.label}
-            </span>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              {task.selectedFormat.toUpperCase()}
-            </span>
-          </div>
+    return (
+        <div className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {task.videoTitle}
+                    </h4>
+                    <div className="flex items-center gap-2 mt-1">
+                        {statusDisplay.icon}
+                        <span className={`text-xs font-medium ${statusDisplay.color}`}>
+                            {statusDisplay.label}
+                        </span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {task.selectedFormat.toUpperCase()}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-1">
+                    {task.status === 'completed' && (
+                        <>
+                            <button
+                                onClick={() => openDownloadedFile(task.id)}
+                                className="p-2 rounded-lg bg-green-100 dark:bg-green-900/20 hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors"
+                                aria-label="Open downloaded file"
+                                title="Open file"
+                            >
+                                <ExternalLink className="w-4 h-4 text-green-700 dark:text-green-400" />
+                            </button>
+                            <button
+                                onClick={() => showDownloadedFile(task.id)}
+                                className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                                aria-label="Show downloaded file in folder"
+                                title="Show in folder"
+                            >
+                                <FolderOpen className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+                            </button>
+                            <button
+                                onClick={handleDownloadAgain}
+                                className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
+                                aria-label="Download again"
+                                title="Download again"
+                            >
+                                <RotateCcw className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                            </button>
+                            <button
+                                onClick={() => removeHistoryItem(task.id)}
+                                className="p-2 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors"
+                                aria-label="Remove from history"
+                                title="Remove from history (keeps the file)"
+                            >
+                                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+                            </button>
+                        </>
+                    )}
+
+                    {task.status === 'error' && (
+                        <button
+                            onClick={() => retryDownload(task.id)}
+                            className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
+                            aria-label="Retry failed download"
+                            title="Retry"
+                        >
+                            <RotateCcw className="w-4 h-4 text-blue-700 dark:text-blue-400" />
+                        </button>
+                    )}
+
+                    {task.status === 'downloading' && (
+                        <button
+                            onClick={handlePause}
+                            disabled={isWindows}
+                            className={`p-2 rounded-lg transition-colors ${isWindows
+                                    ? 'bg-gray-100 dark:bg-gray-700 cursor-not-allowed opacity-50'
+                                    : 'bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+                                }`}
+                            aria-label={isWindows ? 'Pause not available on Windows' : 'Pause download'}
+                            title={isWindows ? 'Pausing downloads is not supported on Windows' : 'Pause download'}
+                        >
+                            <Pause className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+                            {isWindows && <Info className="w-3 h-3 ml-1 text-gray-400" />}
+                        </button>
+                    )}
+
+                    {task.status === 'paused' && (
+                        <button
+                            onClick={handleResume}
+                            disabled={isWindows}
+                            className={`p-2 rounded-lg transition-colors ${isWindows
+                                    ? 'bg-gray-100 dark:bg-gray-700 cursor-not-allowed opacity-50'
+                                    : 'bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+                                }`}
+                            aria-label={isWindows ? 'Resume not available on Windows' : 'Resume download'}
+                            title={isWindows ? 'Resuming downloads is not supported on Windows' : 'Resume download'}
+                        >
+                            <Play className="w-4 h-4 text-gray-700 dark:text-gray-300" />
+                            {isWindows && <Info className="w-3 h-3 ml-1 text-gray-400" />}
+                        </button>
+                    )}
+
+                    {(task.status === 'downloading' || task.status === 'paused' || task.status === 'pending' || task.status === 'error') && (
+                        <button
+                            onClick={handleCancel}
+                            className="p-2 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors"
+                            aria-label="Cancel download"
+                        >
+                            <X className="w-4 h-4 text-red-600 dark:text-red-400" />
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Progress bar */}
+            {(task.status === 'downloading' || task.status === 'paused' || task.status === 'pending') && (
+                <div className="mb-2">
+                    <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                            className={`h-full transition-all duration-300 ease-out ${task.status === 'downloading'
+                                ? 'bg-blue-600 dark:bg-blue-500'
+                                : 'bg-yellow-600 dark:bg-yellow-500'
+                                }`}
+                            style={{ width: `${Math.min(100, Math.max(0, task.progress || 0))}%` }}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Progress details */}
+            {task.status === 'downloading' && (
+                <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+                    <span className="font-medium">{(task.progress || 0).toFixed(1)}%</span>
+                    <span className="font-mono">{task.speed || 'Calculating...'}</span>
+                    <span>ETA: {task.eta || 'Calculating...'}</span>
+                </div>
+            )}
+
+            {/* Paused state details */}
+            {task.status === 'paused' && (
+                <div className="flex items-center justify-between text-xs text-yellow-600 dark:text-yellow-400">
+                    <span className="font-medium">{(task.progress || 0).toFixed(1)}% (Paused)</span>
+                    <span>Click resume to continue</span>
+                </div>
+            )}
+
+            {/* Pending state details */}
+            {task.status === 'pending' && (
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>Waiting in queue...</span>
+                </div>
+            )}
+
+            {/* Error message */}
+            {task.status === 'error' && task.errorMessage && (
+                <div className="mt-2 text-xs text-red-600 dark:text-red-400">
+                    {task.errorMessage}
+                </div>
+            )}
         </div>
-
-        {/* Action buttons */}
-        <div className="flex gap-1">
-          {task.status === 'completed' && (
-            <>
-              <button
-                onClick={() => openDownloadedFile(task.id)}
-                className="p-2 rounded-lg bg-green-100 dark:bg-green-900/20 hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors"
-                aria-label="Open downloaded file"
-                title="Open file"
-              >
-                <ExternalLink className="w-4 h-4 text-green-700 dark:text-green-400" />
-              </button>
-              <button
-                onClick={() => showDownloadedFile(task.id)}
-                className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                aria-label="Show downloaded file in folder"
-                title="Show in folder"
-              >
-                <FolderOpen className="w-4 h-4 text-gray-700 dark:text-gray-300" />
-              </button>
-              <button
-                onClick={handleDownloadAgain}
-                className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
-                aria-label="Download again"
-                title="Download again"
-              >
-                <RotateCcw className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-              </button>
-              <button
-                onClick={() => removeHistoryItem(task.id)}
-                className="p-2 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors"
-                aria-label="Remove from history"
-                title="Remove from history (keeps the file)"
-              >
-                <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
-              </button>
-            </>
-          )}
-
-          {task.status === 'error' && (
-            <button
-              onClick={() => retryDownload(task.id)}
-              className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/20 hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
-              aria-label="Retry failed download"
-              title="Retry"
-            >
-              <RotateCcw className="w-4 h-4 text-blue-700 dark:text-blue-400" />
-            </button>
-          )}
-
-          {supportsPause && task.status === 'downloading' && (
-            <button
-              onClick={handlePause}
-              className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              aria-label="Pause download"
-            >
-              <Pause className="w-4 h-4 text-gray-700 dark:text-gray-300" />
-            </button>
-          )}
-          
-          {supportsPause && task.status === 'paused' && (
-            <button
-              onClick={handleResume}
-              className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              aria-label="Resume download"
-            >
-              <Play className="w-4 h-4 text-gray-700 dark:text-gray-300" />
-            </button>
-          )}
-          
-          {(task.status === 'downloading' || task.status === 'paused' || task.status === 'pending' || task.status === 'error') && (
-            <button
-              onClick={handleCancel}
-              className="p-2 rounded-lg bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 transition-colors"
-              aria-label="Cancel download"
-            >
-              <X className="w-4 h-4 text-red-600 dark:text-red-400" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      {(task.status === 'downloading' || task.status === 'paused' || task.status === 'pending') && (
-        <div className="mb-2">
-          <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ease-out ${
-                task.status === 'downloading' 
-                  ? 'bg-blue-600 dark:bg-blue-500' 
-                  : 'bg-yellow-600 dark:bg-yellow-500'
-              }`}
-              style={{ width: `${Math.min(100, Math.max(0, task.progress || 0))}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Progress details */}
-      {task.status === 'downloading' && (
-        <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-          <span className="font-medium">{(task.progress || 0).toFixed(1)}%</span>
-          <span className="font-mono">{task.speed || 'Calculating...'}</span>
-          <span>ETA: {task.eta || 'Calculating...'}</span>
-        </div>
-      )}
-
-      {/* Paused state details */}
-      {task.status === 'paused' && (
-        <div className="flex items-center justify-between text-xs text-yellow-600 dark:text-yellow-400">
-          <span className="font-medium">{(task.progress || 0).toFixed(1)}% (Paused)</span>
-          <span>Click resume to continue</span>
-        </div>
-      )}
-
-      {/* Pending state details */}
-      {task.status === 'pending' && (
-        <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>Waiting in queue...</span>
-        </div>
-      )}
-
-      {/* Error message */}
-      {task.status === 'error' && task.errorMessage && (
-        <div className="mt-2 text-xs text-red-600 dark:text-red-400">
-          {task.errorMessage}
-        </div>
-      )}
-    </div>
-  );
+    );
 };

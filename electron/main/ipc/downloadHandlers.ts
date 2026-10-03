@@ -7,449 +7,508 @@
 import * as fs from 'fs';
 import { ipcMain, IpcMainInvokeEvent, BrowserWindow, shell } from 'electron';
 import {
-  CreateDownloadTaskUseCase,
-  ExecuteDownloadUseCase,
-  ManageQueueUseCase
+    CreateDownloadTaskUseCase,
+    ExecuteDownloadUseCase,
+    ManageQueueUseCase
 } from '../application';
 import { DownloadQueue } from '../domain/entities';
 import { DownloadStatus } from '../domain/value-objects';
 import { Logger } from '../infrastructure';
 import { ProgressData } from '../infrastructure/ProgressParser';
 import {
-  IPC_CHANNELS,
-  StartDownloadRequest,
-  StartDownloadResponse,
-  PauseDownloadRequest,
-  PauseDownloadResponse,
-  ResumeDownloadRequest,
-  ResumeDownloadResponse,
-  CancelDownloadRequest,
-  CancelDownloadResponse,
-  TaskActionRequest,
-  TaskActionResponse,
-  ClearCompletedResponse,
-  ProgressUpdateEvent,
-  QueueStateEvent
+    IPC_CHANNELS,
+    StartDownloadRequest,
+    StartDownloadResponse,
+    PauseDownloadRequest,
+    PauseDownloadResponse,
+    ResumeDownloadRequest,
+    ResumeDownloadResponse,
+    CancelDownloadRequest,
+    CancelDownloadResponse,
+    TaskActionRequest,
+    TaskActionResponse,
+    ClearCompletedResponse,
+    DeleteCompletedFilesResponse,
+    ProgressUpdateEvent,
+    QueueStateEvent
 } from './contracts';
 
 export class DownloadHandlers {
-  private progressUpdateInterval: NodeJS.Timeout | null = null;
+    private progressUpdateInterval: NodeJS.Timeout | null = null;
 
-  constructor(
-    private createDownloadTaskUseCase: CreateDownloadTaskUseCase,
-    private executeDownloadUseCase: ExecuteDownloadUseCase,
-    private manageQueueUseCase: ManageQueueUseCase,
-    private queue: DownloadQueue,
-    private logger: Logger,
-    private getMainWindow: () => BrowserWindow | null
-  ) {}
+    constructor(
+        private createDownloadTaskUseCase: CreateDownloadTaskUseCase,
+        private executeDownloadUseCase: ExecuteDownloadUseCase,
+        private manageQueueUseCase: ManageQueueUseCase,
+        private queue: DownloadQueue,
+        private logger: Logger,
+        private getMainWindow: () => BrowserWindow | null
+    ) { }
 
-  /**
-   * Register all download-related IPC handlers
-   */
-  register(): void {
-    ipcMain.handle(
-      IPC_CHANNELS.DOWNLOAD_START,
-      this.handleStartDownload.bind(this)
-    );
+    /**
+     * Register all download-related IPC handlers
+     */
+    register(): void {
+        ipcMain.handle(
+            IPC_CHANNELS.DOWNLOAD_START,
+            this.handleStartDownload.bind(this)
+        );
 
-    ipcMain.handle(
-      IPC_CHANNELS.DOWNLOAD_PAUSE,
-      this.handlePauseDownload.bind(this)
-    );
+        ipcMain.handle(
+            IPC_CHANNELS.DOWNLOAD_PAUSE,
+            this.handlePauseDownload.bind(this)
+        );
 
-    ipcMain.handle(
-      IPC_CHANNELS.DOWNLOAD_RESUME,
-      this.handleResumeDownload.bind(this)
-    );
+        ipcMain.handle(
+            IPC_CHANNELS.DOWNLOAD_RESUME,
+            this.handleResumeDownload.bind(this)
+        );
 
-    ipcMain.handle(
-      IPC_CHANNELS.DOWNLOAD_CANCEL,
-      this.handleCancelDownload.bind(this)
-    );
+        ipcMain.handle(
+            IPC_CHANNELS.DOWNLOAD_CANCEL,
+            this.handleCancelDownload.bind(this)
+        );
 
-    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_RETRY, this.handleRetryDownload.bind(this));
-    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_OPEN_FILE, this.handleOpenFile.bind(this));
-    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_SHOW_IN_FOLDER, this.handleShowInFolder.bind(this));
-    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_REMOVE_HISTORY, this.handleRemoveHistory.bind(this));
-    ipcMain.handle(IPC_CHANNELS.DOWNLOAD_CLEAR_COMPLETED, this.handleClearCompleted.bind(this));
+        ipcMain.handle(IPC_CHANNELS.DOWNLOAD_RETRY, this.handleRetryDownload.bind(this));
+        ipcMain.handle(IPC_CHANNELS.DOWNLOAD_OPEN_FILE, this.handleOpenFile.bind(this));
+        ipcMain.handle(IPC_CHANNELS.DOWNLOAD_SHOW_IN_FOLDER, this.handleShowInFolder.bind(this));
+        ipcMain.handle(IPC_CHANNELS.DOWNLOAD_REMOVE_HISTORY, this.handleRemoveHistory.bind(this));
+        ipcMain.handle(IPC_CHANNELS.DOWNLOAD_CLEAR_COMPLETED, this.handleClearCompleted.bind(this));
+        ipcMain.handle(IPC_CHANNELS.DOWNLOAD_DELETE_COMPLETED_FILES, this.handleDeleteCompletedFiles.bind(this));
 
-    // Start progress update interval (at least once per second)
-    this.startProgressUpdateInterval();
+        // Start progress update interval (at least once per second)
+        this.startProgressUpdateInterval();
 
-    this.logger.info('Download IPC handlers registered');
-  }
+        this.logger.info('Download IPC handlers registered');
+    }
 
-  /**
-   * Handle download:start IPC call
-   */
-  private async handleStartDownload(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<StartDownloadResponse> {
-    try {
-      // Validate request structure
-      if (!this.isValidStartDownloadRequest(request)) {
-        this.logger.error('Invalid start download request', undefined, { request });
-        return {
-          success: false,
-          error: {
-            type: 'invalid_params',
-            message: 'Invalid request: missing or invalid parameters'
-          }
-        };
-      }
+    /**
+     * Handle download:start IPC call
+     */
+    private async handleStartDownload(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<StartDownloadResponse> {
+        try {
+            // Validate request structure
+            if (!this.isValidStartDownloadRequest(request)) {
+                this.logger.error('Invalid start download request', undefined, { request });
+                return {
+                    success: false,
+                    error: {
+                        type: 'invalid_params',
+                        message: 'Invalid request: missing or invalid parameters'
+                    }
+                };
+            }
 
-      this.logger.info('Starting download', {
-        url: request.url,
-        format: request.format,
-        quality: request.quality
-      });
+            // Validate quality parameter to prevent format selector injection
+            if (!this.isValidQuality(request.format, request.quality)) {
+                this.logger.error('Invalid quality parameter', undefined, {
+                    format: request.format,
+                    quality: request.quality
+                });
+                return {
+                    success: false,
+                    error: {
+                        type: 'invalid_params',
+                        message: 'Invalid quality parameter'
+                    }
+                };
+            }
 
-      // Create download task
-      const createResponse = await this.createDownloadTaskUseCase.execute(request);
+            this.logger.info('Starting download', {
+                url: request.url,
+                format: request.format,
+                quality: request.quality
+            });
 
-      if (!createResponse.success || !createResponse.taskId) {
-        return createResponse;
-      }
+            // Create download task
+            const createResponse = await this.createDownloadTaskUseCase.execute(request);
 
-      // Send initial queue update
-      this.sendQueueUpdate();
+            if (!createResponse.success || !createResponse.taskId) {
+                return createResponse;
+            }
 
-      // Start executing downloads from queue
-      await this.manageQueueUseCase.processQueue();
+            // Send initial queue update
+            this.sendQueueUpdate();
 
-      return createResponse;
-    } catch (error) {
-      this.logger.error('Error handling start download', error as Error);
+            // Start executing downloads from queue
+            await this.manageQueueUseCase.processQueue();
 
-      return {
-        success: false,
-        error: {
-          type: 'unknown',
-          message: (error as Error).message || 'Unknown error occurred'
+            return createResponse;
+        } catch (error) {
+            this.logger.error('Error handling start download', error as Error);
+
+            return {
+                success: false,
+                error: {
+                    type: 'unknown',
+                    message: (error as Error).message || 'Unknown error occurred'
+                }
+            };
         }
-      };
     }
-  }
 
-  /**
-   * Handle download:pause IPC call
-   */
-  private async handlePauseDownload(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<PauseDownloadResponse> {
-    try {
-      // Validate request structure
-      if (!this.isValidPauseDownloadRequest(request)) {
-        this.logger.error('Invalid pause download request', undefined, { request });
-        return {
-          success: false,
-          error: 'Invalid request: missing or invalid taskId'
+    /**
+     * Handle download:pause IPC call
+     */
+    private async handlePauseDownload(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<PauseDownloadResponse> {
+        try {
+            // Validate request structure
+            if (!this.isValidPauseDownloadRequest(request)) {
+                this.logger.error('Invalid pause download request', undefined, { request });
+                return {
+                    success: false,
+                    error: 'Invalid request: missing or invalid taskId'
+                };
+            }
+
+            this.logger.info('Pausing download', { taskId: request.taskId });
+
+            const response = await this.manageQueueUseCase.pauseDownload(request);
+
+            // Send queue update
+            this.sendQueueUpdate();
+
+            return response;
+        } catch (error) {
+            this.logger.error('Error handling pause download', error as Error);
+
+            return {
+                success: false,
+                error: (error as Error).message || 'Unknown error occurred'
+            };
+        }
+    }
+
+    /**
+     * Handle download:resume IPC call
+     */
+    private async handleResumeDownload(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<ResumeDownloadResponse> {
+        try {
+            // Validate request structure
+            if (!this.isValidResumeDownloadRequest(request)) {
+                this.logger.error('Invalid resume download request', undefined, { request });
+                return {
+                    success: false,
+                    error: 'Invalid request: missing or invalid taskId'
+                };
+            }
+
+            this.logger.info('Resuming download', { taskId: request.taskId });
+
+            const response = await this.manageQueueUseCase.resumeDownload(request);
+
+            // Send queue update
+            this.sendQueueUpdate();
+
+            return response;
+        } catch (error) {
+            this.logger.error('Error handling resume download', error as Error);
+
+            return {
+                success: false,
+                error: (error as Error).message || 'Unknown error occurred'
+            };
+        }
+    }
+
+    /**
+     * Handle download:cancel IPC call
+     */
+    private async handleCancelDownload(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<CancelDownloadResponse> {
+        try {
+            // Validate request structure
+            if (!this.isValidCancelDownloadRequest(request)) {
+                this.logger.error('Invalid cancel download request', undefined, { request });
+                return {
+                    success: false,
+                    error: 'Invalid request: missing or invalid taskId'
+                };
+            }
+
+            this.logger.info('Cancelling download', { taskId: request.taskId });
+
+            const response = await this.manageQueueUseCase.cancelDownload(request);
+
+            // Send queue update
+            this.sendQueueUpdate();
+
+            // Process queue to start next task if available
+            await this.manageQueueUseCase.processQueue();
+
+            return response;
+        } catch (error) {
+            this.logger.error('Error handling cancel download', error as Error);
+
+            return {
+                success: false,
+                error: (error as Error).message || 'Unknown error occurred'
+            };
+        }
+    }
+
+    private async handleRetryDownload(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<TaskActionResponse> {
+        if (!this.isValidTaskActionRequest(request)) {
+            return { success: false, error: 'Invalid task ID' };
+        }
+
+        try {
+            const response = await this.manageQueueUseCase.retryDownload(request);
+            if (response.success) {
+                this.sendQueueUpdate();
+                await this.manageQueueUseCase.processQueue();
+            }
+            return response;
+        } catch (error) {
+            this.logger.error('Failed to retry download', error as Error, { taskId: request.taskId });
+            return { success: false, error: error instanceof Error ? error.message : 'Retry failed' };
+        }
+    }
+
+    private async handleOpenFile(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<TaskActionResponse> {
+        const task = this.getCompletedTask(request);
+        if (!task) return { success: false, error: 'Completed task not found' };
+        if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
+
+        try {
+            const errorMessage = await shell.openPath(task.filePath);
+            return errorMessage ? { success: false, error: errorMessage } : { success: true };
+        } catch (error) {
+            this.logger.error('Failed to open downloaded file', error as Error, { taskId: task.id });
+            return { success: false, error: error instanceof Error ? error.message : 'Could not open file' };
+        }
+    }
+
+    private async handleShowInFolder(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<TaskActionResponse> {
+        const task = this.getCompletedTask(request);
+        if (!task) return { success: false, error: 'Completed task not found' };
+        if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
+
+        try {
+            shell.showItemInFolder(task.filePath);
+            return { success: true };
+        } catch (error) {
+            this.logger.error('Failed to show downloaded file', error as Error, { taskId: task.id });
+            return { success: false, error: error instanceof Error ? error.message : 'Could not show file' };
+        }
+    }
+
+    private async handleRemoveHistory(
+        event: IpcMainInvokeEvent,
+        request: unknown
+    ): Promise<TaskActionResponse> {
+        if (!this.isValidTaskActionRequest(request)) {
+            return { success: false, error: 'Invalid task ID' };
+        }
+
+        try {
+            const response = await this.manageQueueUseCase.removeHistoryTask(request);
+            if (response.success) this.sendQueueUpdate();
+            return response;
+        } catch (error) {
+            this.logger.error('Failed to remove history item', error as Error, { taskId: request.taskId });
+            return { success: false, error: error instanceof Error ? error.message : 'Could not remove history item' };
+        }
+    }
+
+    private async handleClearCompleted(): Promise<ClearCompletedResponse> {
+        try {
+            const response = await this.manageQueueUseCase.clearCompleted();
+            this.sendQueueUpdate();
+            return response;
+        } catch (error) {
+            this.logger.error('Failed to clear completed history', error as Error);
+            return {
+                success: false,
+                removedCount: 0,
+                error: error instanceof Error ? error.message : 'Could not clear completed history'
+            };
+        }
+    }
+
+    private async handleDeleteCompletedFiles(): Promise<DeleteCompletedFilesResponse> {
+        try {
+            const response = await this.manageQueueUseCase.deleteCompletedFiles();
+            this.sendQueueUpdate();
+            return response;
+        } catch (error) {
+            this.logger.error('Failed to delete completed files', error as Error);
+            return {
+                success: false,
+                removedCount: 0,
+                error: error instanceof Error ? error.message : 'Could not delete completed files'
+            };
+        }
+    }
+
+    private getCompletedTask(request: unknown) {
+        if (!this.isValidTaskActionRequest(request)) return null;
+        return this.queue.tasks.find(task => task.id === request.taskId && task.status === 'completed') || null;
+    }
+
+    /**
+     * Send progress update event to renderer
+     */
+    sendProgressUpdate(taskId: string, progress: ProgressData, status: DownloadStatus): void {
+        const mainWindow = this.getMainWindow();
+        if (!mainWindow) return;
+
+        const event: ProgressUpdateEvent = {
+            taskId,
+            progress: progress.percentage,
+            speed: progress.speed,
+            eta: progress.eta,
+            status
         };
-      }
 
-      this.logger.info('Pausing download', { taskId: request.taskId });
-
-      const response = await this.manageQueueUseCase.pauseDownload(request);
-
-      // Send queue update
-      this.sendQueueUpdate();
-
-      return response;
-    } catch (error) {
-      this.logger.error('Error handling pause download', error as Error);
-
-      return {
-        success: false,
-        error: (error as Error).message || 'Unknown error occurred'
-      };
+        mainWindow.webContents.send(IPC_CHANNELS.DOWNLOAD_PROGRESS, event);
     }
-  }
 
-  /**
-   * Handle download:resume IPC call
-   */
-  private async handleResumeDownload(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<ResumeDownloadResponse> {
-    try {
-      // Validate request structure
-      if (!this.isValidResumeDownloadRequest(request)) {
-        this.logger.error('Invalid resume download request', undefined, { request });
-        return {
-          success: false,
-          error: 'Invalid request: missing or invalid taskId'
+    /**
+     * Send queue state update event to renderer
+     */
+    sendQueueUpdate(): void {
+        const mainWindow = this.getMainWindow();
+        if (!mainWindow) return;
+
+        const event: QueueStateEvent = {
+            tasks: this.queue.tasks
         };
-      }
 
-      this.logger.info('Resuming download', { taskId: request.taskId });
-
-      const response = await this.manageQueueUseCase.resumeDownload(request);
-
-      // Send queue update
-      this.sendQueueUpdate();
-
-      return response;
-    } catch (error) {
-      this.logger.error('Error handling resume download', error as Error);
-
-      return {
-        success: false,
-        error: (error as Error).message || 'Unknown error occurred'
-      };
-    }
-  }
-
-  /**
-   * Handle download:cancel IPC call
-   */
-  private async handleCancelDownload(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<CancelDownloadResponse> {
-    try {
-      // Validate request structure
-      if (!this.isValidCancelDownloadRequest(request)) {
-        this.logger.error('Invalid cancel download request', undefined, { request });
-        return {
-          success: false,
-          error: 'Invalid request: missing or invalid taskId'
-        };
-      }
-
-      this.logger.info('Cancelling download', { taskId: request.taskId });
-
-      const response = await this.manageQueueUseCase.cancelDownload(request);
-
-      // Send queue update
-      this.sendQueueUpdate();
-
-      // Process queue to start next task if available
-      await this.manageQueueUseCase.processQueue();
-
-      return response;
-    } catch (error) {
-      this.logger.error('Error handling cancel download', error as Error);
-
-      return {
-        success: false,
-        error: (error as Error).message || 'Unknown error occurred'
-      };
-    }
-  }
-
-  private async handleRetryDownload(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<TaskActionResponse> {
-    if (!this.isValidTaskActionRequest(request)) {
-      return { success: false, error: 'Invalid task ID' };
+        mainWindow.webContents.send(IPC_CHANNELS.DOWNLOAD_QUEUE_UPDATE, event);
     }
 
-    try {
-      const response = await this.manageQueueUseCase.retryDownload(request);
-      if (response.success) {
-        this.sendQueueUpdate();
-        await this.manageQueueUseCase.processQueue();
-      }
-      return response;
-    } catch (error) {
-      this.logger.error('Failed to retry download', error as Error, { taskId: request.taskId });
-      return { success: false, error: error instanceof Error ? error.message : 'Retry failed' };
-    }
-  }
+    /**
+     * Start interval to send progress updates at least once per second
+     */
+    private startProgressUpdateInterval(): void {
+        if (this.progressUpdateInterval) {
+            clearInterval(this.progressUpdateInterval);
+        }
 
-  private async handleOpenFile(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<TaskActionResponse> {
-    const task = this.getCompletedTask(request);
-    if (!task) return { success: false, error: 'Completed task not found' };
-    if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
-
-    try {
-      const errorMessage = await shell.openPath(task.filePath);
-      return errorMessage ? { success: false, error: errorMessage } : { success: true };
-    } catch (error) {
-      this.logger.error('Failed to open downloaded file', error as Error, { taskId: task.id });
-      return { success: false, error: error instanceof Error ? error.message : 'Could not open file' };
-    }
-  }
-
-  private async handleShowInFolder(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<TaskActionResponse> {
-    const task = this.getCompletedTask(request);
-    if (!task) return { success: false, error: 'Completed task not found' };
-    if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
-
-    try {
-      shell.showItemInFolder(task.filePath);
-      return { success: true };
-    } catch (error) {
-      this.logger.error('Failed to show downloaded file', error as Error, { taskId: task.id });
-      return { success: false, error: error instanceof Error ? error.message : 'Could not show file' };
-    }
-  }
-
-  private async handleRemoveHistory(
-    event: IpcMainInvokeEvent,
-    request: unknown
-  ): Promise<TaskActionResponse> {
-    if (!this.isValidTaskActionRequest(request)) {
-      return { success: false, error: 'Invalid task ID' };
+        this.progressUpdateInterval = setInterval(() => {
+            this.sendQueueUpdate();
+        }, 1000);
     }
 
-    try {
-      const response = await this.manageQueueUseCase.removeHistoryTask(request);
-      if (response.success) this.sendQueueUpdate();
-      return response;
-    } catch (error) {
-      this.logger.error('Failed to remove history item', error as Error, { taskId: request.taskId });
-      return { success: false, error: error instanceof Error ? error.message : 'Could not remove history item' };
-    }
-  }
-
-  private async handleClearCompleted(): Promise<ClearCompletedResponse> {
-    try {
-      const response = await this.manageQueueUseCase.clearCompleted();
-      this.sendQueueUpdate();
-      return response;
-    } catch (error) {
-      this.logger.error('Failed to clear completed history', error as Error);
-      return {
-        success: false,
-        removedCount: 0,
-        error: error instanceof Error ? error.message : 'Could not clear completed history'
-      };
-    }
-  }
-
-  private getCompletedTask(request: unknown) {
-    if (!this.isValidTaskActionRequest(request)) return null;
-    return this.queue.tasks.find(task => task.id === request.taskId && task.status === 'completed') || null;
-  }
-
-  /**
-   * Send progress update event to renderer
-   */
-  sendProgressUpdate(taskId: string, progress: ProgressData, status: DownloadStatus): void {
-    const mainWindow = this.getMainWindow();
-    if (!mainWindow) return;
-
-    const event: ProgressUpdateEvent = {
-      taskId,
-      progress: progress.percentage,
-      speed: progress.speed,
-      eta: progress.eta,
-      status
-    };
-
-    mainWindow.webContents.send(IPC_CHANNELS.DOWNLOAD_PROGRESS, event);
-  }
-
-  /**
-   * Send queue state update event to renderer
-   */
-  sendQueueUpdate(): void {
-    const mainWindow = this.getMainWindow();
-    if (!mainWindow) return;
-
-    const event: QueueStateEvent = {
-      tasks: this.queue.tasks
-    };
-
-    mainWindow.webContents.send(IPC_CHANNELS.DOWNLOAD_QUEUE_UPDATE, event);
-  }
-
-  /**
-   * Start interval to send progress updates at least once per second
-   */
-  private startProgressUpdateInterval(): void {
-    if (this.progressUpdateInterval) {
-      clearInterval(this.progressUpdateInterval);
+    /**
+     * Stop progress update interval
+     */
+    stopProgressUpdateInterval(): void {
+        if (this.progressUpdateInterval) {
+            clearInterval(this.progressUpdateInterval);
+            this.progressUpdateInterval = null;
+        }
     }
 
-    this.progressUpdateInterval = setInterval(() => {
-      this.sendQueueUpdate();
-    }, 1000);
-  }
-
-  /**
-   * Stop progress update interval
-   */
-  stopProgressUpdateInterval(): void {
-    if (this.progressUpdateInterval) {
-      clearInterval(this.progressUpdateInterval);
-      this.progressUpdateInterval = null;
+    /**
+         * Validate StartDownloadRequest structure
+         */
+    private isValidStartDownloadRequest(request: unknown): request is StartDownloadRequest {
+        return (
+            typeof request === 'object' &&
+            request !== null &&
+            'url' in request &&
+            'videoTitle' in request &&
+            'format' in request &&
+            'quality' in request &&
+            typeof (request as StartDownloadRequest).url === 'string' &&
+            typeof (request as StartDownloadRequest).videoTitle === 'string' &&
+            ((request as StartDownloadRequest).format === 'mp4' || (request as StartDownloadRequest).format === 'mp3') &&
+            typeof (request as StartDownloadRequest).quality === 'string'
+        );
     }
-  }
 
-  /**
-   * Validate StartDownloadRequest structure
-   */
-  private isValidStartDownloadRequest(request: unknown): request is StartDownloadRequest {
-    return (
-      typeof request === 'object' &&
-      request !== null &&
-      'url' in request &&
-      'videoTitle' in request &&
-      'format' in request &&
-      'quality' in request &&
-      typeof (request as StartDownloadRequest).url === 'string' &&
-      typeof (request as StartDownloadRequest).videoTitle === 'string' &&
-      ((request as StartDownloadRequest).format === 'mp4' || (request as StartDownloadRequest).format === 'mp3') &&
-      typeof (request as StartDownloadRequest).quality === 'string'
-    );
-  }
+    /**
+     * Validate quality parameter to prevent format selector injection
+     * MP4: 'best' or height like '1080p', '720p', etc. (digits + optional 'p')
+     * MP3: 'best' or format ID like '251', '140' (alphanumeric, dot, underscore, dash)
+     */
+    private isValidQuality(format: 'mp4' | 'mp3', quality: string): boolean {
+        const trimmed = quality.trim();
 
-  /**
-   * Validate PauseDownloadRequest structure
-   */
-  private isValidPauseDownloadRequest(request: unknown): request is PauseDownloadRequest {
-    return (
-      typeof request === 'object' &&
-      request !== null &&
-      'taskId' in request &&
-      typeof (request as PauseDownloadRequest).taskId === 'string'
-    );
-  }
+        if (!trimmed || trimmed.length > 50) {
+            return false;
+        }
 
-  /**
-   * Validate ResumeDownloadRequest structure
-   */
-  private isValidResumeDownloadRequest(request: unknown): request is ResumeDownloadRequest {
-    return (
-      typeof request === 'object' &&
-      request !== null &&
-      'taskId' in request &&
-      typeof (request as ResumeDownloadRequest).taskId === 'string'
-    );
-  }
+        if (trimmed === 'best') {
+            return true;
+        }
 
-  /**
-   * Validate CancelDownloadRequest structure
-   */
-  private isValidCancelDownloadRequest(request: unknown): request is CancelDownloadRequest {
-    return (
-      typeof request === 'object' &&
-      request !== null &&
-      'taskId' in request &&
-      typeof (request as CancelDownloadRequest).taskId === 'string'
-    );
-  }
+        if (format === 'mp4') {
+            // MP4 quality: height like "1080p", "720p" or just "1080"
+            // Must be digits optionally followed by 'p'
+            return /^\d+p?$/.test(trimmed);
+        } else {
+            // MP3 quality: format ID like "251", "140", "best"
+            // yt-dlp format IDs are alphanumeric with dots, underscores, dashes
+            return /^[A-Za-z0-9._-]+$/.test(trimmed);
+        }
+    }
 
-  private isValidTaskActionRequest(request: unknown): request is TaskActionRequest {
-    return (
-      typeof request === 'object' &&
-      request !== null &&
-      'taskId' in request &&
-      typeof (request as TaskActionRequest).taskId === 'string' &&
-      (request as TaskActionRequest).taskId.length > 0
-    );
-  }
+    /**
+     * Validate PauseDownloadRequest structure
+     */
+    private isValidPauseDownloadRequest(request: unknown): request is PauseDownloadRequest {
+        return (
+            typeof request === 'object' &&
+            request !== null &&
+            'taskId' in request &&
+            typeof (request as PauseDownloadRequest).taskId === 'string'
+        );
+    }
+
+    /**
+     * Validate ResumeDownloadRequest structure
+     */
+    private isValidResumeDownloadRequest(request: unknown): request is ResumeDownloadRequest {
+        return (
+            typeof request === 'object' &&
+            request !== null &&
+            'taskId' in request &&
+            typeof (request as ResumeDownloadRequest).taskId === 'string'
+        );
+    }
+
+    /**
+     * Validate CancelDownloadRequest structure
+     */
+    private isValidCancelDownloadRequest(request: unknown): request is CancelDownloadRequest {
+        return (
+            typeof request === 'object' &&
+            request !== null &&
+            'taskId' in request &&
+            typeof (request as CancelDownloadRequest).taskId === 'string'
+        );
+    }
+
+    private isValidTaskActionRequest(request: unknown): request is TaskActionRequest {
+        return (
+            typeof request === 'object' &&
+            request !== null &&
+            'taskId' in request &&
+            typeof (request as TaskActionRequest).taskId === 'string' &&
+            (request as TaskActionRequest).taskId.length > 0
+        );
+    }
 }
