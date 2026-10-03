@@ -1,0 +1,61 @@
+Critical Issues (App-breaking / Data loss)
+1. Windows: Pause/Resume silently fails without user feedback
+Location: ManageQueueUseCase.ts → pause() / resume() methods
+Issue: These methods throw Error('Pausing downloads is not supported on Windows') but the error is caught and returned as a generic error message. The UI shows "Failed to pause download" without explaining why (Windows limitation).
+Impact: Users click pause/resume, nothing happens, no clear explanation.
+2. Queue persistence corruption risk on concurrent writes
+Location: QueuePersistence.ts + ManageQueueUseCase.ts
+Issue: persistQueue() is called from multiple places without file locking. If app crashes during write, queue.json can become corrupted (truncated JSON).
+Mitigation needed: Atomic writes (write to temp file → rename) + validation on load.
+3. Deno installer uses tar which doesn't exist on Windows
+Location: DenoInstaller.ts line 133: spawn('tar', ['-xf', archivePath, '-C', destination])
+Issue: Windows doesn't have tar by default. Deno download is a .zip file but code tries to extract with tar.
+Impact: Deno installation fails silently on Windows → YouTube 1080p+ quality extraction fails.
+4. No cleanup of .part files on app crash during download
+Location: ManageQueueUseCase.ts → cancel() method only deletes .part on explicit cancel
+Issue: If app crashes or is killed during download, .part files remain and consume disk space. No cleanup on startup.
+🟠 High Severity (Functional bugs)
+5. Format selector defaults to wrong quality for MP3
+Location: FormatSelector.tsx line 48-52
+Issue: When switching from MP4 → MP3, it picks qualities[0].value which is 'best' (string), but YtDlpExecutor.buildAudioFormatSelector() expects a format ID like '251'. This causes fallback to bestaudio every time instead of using the user-selected quality.
+6. Race condition: processQueue() called before ExecuteDownloadUseCase is wired
+Location: main/index.ts lines 207-213
+Issue: ManageQueueUseCase is constructed first, then setExecuteDownloadUseCase() is called. But DownloadHandlers.handleStartDownload() calls manageQueueUseCase.processQueue() immediately after creating a task. If timing is off, executeDownloadUseCase is undefined and nothing downloads.
+Evidence: Line 211 in ManageQueueUseCase.ts: if (!this.executeDownloadUseCase) { logger.error('ExecuteDownloadUseCase not set'); break; }
+7. concurrentLimit setting change doesn't restart queued tasks
+Location: SettingsHandlers / UpdateSettingsUseCase
+Issue: When user changes concurrent limit from 3 → 5, already-pending tasks don't start until next processQueue() call. No automatic queue reprocessing on settings change.
+8. Playlist fetch ignores videos beyond 100 items silently
+Location: YtDlpExecutor.ts → MAX_PLAYLIST_ITEMS = 100
+Issue: Large playlists (>100 videos) are truncated without any warning to user. User thinks all videos are queued but only first 100 are.
+9. Download folder permission check only validates on settings save, not on download start
+Location: SettingsStoreImpl.ts → validate() checks writability
+Issue: If user changes download folder to a location that becomes unwritable later (network drive disconnected, permissions changed), downloads fail with cryptic errors instead of proactive warning.
+10. Auto-update: Squirrel and NSIS both try to register listeners
+Location: AppUpdateService.ts lines 138-139
+Issue: isSquirrelInstalled() checks for Update.exe, isNsisInstalled() checks for app-update.yml. A migrated install might have both → duplicate listeners → double download / double install attempts.
+🟡 Medium Severity (UX issues / Edge cases)
+11. Progress throttling causes ETA to jump/stall in UI
+Location: ExecuteDownloadUseCase.ts line 40: PROGRESS_UPDATE_THROTTLE_MS = 2000
+Issue: UI only updates every 2 seconds, but yt-dlp emits progress every ~1s. User sees ETA stuck at "05:00" then jumps to "03:00". The ProgressParserImpl has ETA smoothing but it's bypassed by the throttle.
+12. No validation of quality parameter from renderer before passing to yt-dlp
+Location: YtDlpExecutor.ts → buildAudioFormatSelector() does basic regex validation
+Issue: For MP4, the quality string (e.g., "1080p") is directly interpolated into format selector: bestvideo[height<=${heightLimit}]. If renderer sends malicious input, could inject format selector expressions (though preload validates, main process doesn't re-validate).
+13. Thumbnail URL from yt-dlp may be HTTP (mixed content) or expire
+Location: YtDlpExecutor.ts → parsePlaylistMetadata() and fetchMetadata()
+Issue: YouTube thumbnails are often HTTP or short-lived signed URLs. React <img> in VideoInfo.tsx will fail to load in HTTPS Electron context (mixed content blocked).
+14. Settings downloadDirectory accepts relative paths but app expects absolute
+Location: SettingsStoreImpl.ts → createDefaultSettings() uses app.getPath('downloads') (absolute)
+Issue: If user manually edits settings.json with relative path, path.join() in CreateDownloadTaskUseCase resolves relative to CWD (which may be app root or userData), causing downloads to wrong location.
+15. No timeout on QueuePersistence.load() - blocks startup on corrupted/large file
+Location: main/index.ts → restoreQueueState() awaits queuePersistence.load()
+Issue: If queue.json is huge (thousands of tasks) or corrupted, app hangs on startup with no timeout.
+16. clearCompleted() doesn't delete actual downloaded files - misleading name
+Location: ManageQueueUseCase.ts line 165-178
+Issue: Button says "Clear completed" but only removes history records. User expects disk space to be freed. Should be "Clear History" with separate "Delete Files" action.
+17. Retry logic doesn't reset processId properly
+Location: ExecuteDownloadUseCase.ts line 97-98
+Issue: On retry, task.processId remains set to old dead process ID. If user clicks "Cancel" before retry starts, cancelProcess() tries to kill non-existent PID.
+18. Deno/FFmpeg/yt-dlp installers have no progress feedback to UI
+Location: main/index.ts → checkYtDlpInstallation()
+Issue: First launch downloads ~50-100MB of tools silently. User sees frozen window for 30-120s with no progress indicator.
