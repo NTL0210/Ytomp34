@@ -17,6 +17,11 @@ interface PersistedQueue {
 export class QueuePersistence {
     private queueFile: string;
     private tempQueueFile: string;
+    // Serializes concurrent saves so the shared temp file is never written
+    // by two saves at the same time (issue: queue corruption on concurrent writes).
+    private saveChain: Promise<void> = Promise.resolve();
+
+    private static readonly LOAD_TIMEOUT_MS = 5000;
 
     constructor() {
         const userDataPath = app.getPath('userData');
@@ -25,6 +30,14 @@ export class QueuePersistence {
     }
 
     async save(queue: DownloadQueue): Promise<void> {
+        const run = this.saveChain.then(() => this.writeAtomic(queue));
+        // Keep the chain alive even if a save fails; the error is still
+        // propagated to the caller of this specific save.
+        this.saveChain = run.catch(() => undefined);
+        await run;
+    }
+
+    private async writeAtomic(queue: DownloadQueue): Promise<void> {
         const data = {
             id: queue.id,
             maxConcurrent: queue.maxConcurrent,
@@ -38,6 +51,18 @@ export class QueuePersistence {
     }
 
     async load(): Promise<PersistedQueue | null> {
+        // Never block startup longer than the timeout on a corrupted/huge file.
+        return Promise.race([
+            this.doLoad(),
+            new Promise<null>(resolve => {
+                const timer = setTimeout(() => resolve(null), QueuePersistence.LOAD_TIMEOUT_MS);
+                // Do not keep the process alive just for this timer.
+                (timer as NodeJS.Timeout).unref?.();
+            })
+        ]);
+    }
+
+    private async doLoad(): Promise<PersistedQueue | null> {
         try {
             if (!fs.existsSync(this.queueFile)) {
                 return null;
