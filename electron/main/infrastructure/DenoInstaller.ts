@@ -66,6 +66,40 @@ export class DenoInstaller {
         return fs.existsSync(this.denoPath);
     }
 
+    /**
+     * Verify that the installed binary actually starts. A truncated or
+     * quarantined deno.exe would otherwise break every yt-dlp invocation that
+     * passes --js-runtimes.
+     */
+    async isRunnable(): Promise<boolean> {
+        if (!this.isInstalled()) return false;
+
+        return new Promise(resolve => {
+            let settled = false;
+            let output = '';
+
+            const child = spawn(this.denoPath, ['--version'], { windowsHide: true });
+
+            const finish = (result: boolean) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                resolve(result);
+            };
+
+            const timeout = setTimeout(() => {
+                child.kill('SIGKILL');
+                finish(false);
+            }, 10_000);
+
+            child.stdout.on('data', data => {
+                output += data.toString();
+            });
+            child.on('error', () => finish(false));
+            child.on('close', code => finish(code === 0 && /deno/i.test(output)));
+        });
+    }
+
     getExecutablePath(): string {
         return this.denoPath;
     }

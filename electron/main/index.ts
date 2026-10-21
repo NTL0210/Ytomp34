@@ -4,9 +4,12 @@
  * Validates: Requirements 16.1, 16.2, 22.1, 22.2, 22.3, 22.4, 22.5
  */
 
-import { app, BrowserWindow } from 'electron';
+import * as electron from 'electron';
+import type { BrowserWindow as BrowserWindowType } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+
+const { app, BrowserWindow } = electron;
 
 // Domain entities
 import { DownloadQueue, DownloadTask } from './domain/entities';
@@ -21,10 +24,15 @@ import {
     QueuePersistence,
     ErrorCategorizer,
     YtDlpInstaller,
-    MIN_SUPPORTED_YT_DLP_VERSION,
+    RECOMMENDED_YT_DLP_VERSION,
     isYtDlpVersionOlderThan,
     FfmpegInstaller,
     DenoInstaller,
+    setCookieConfig,
+    buildYtDlpCandidates,
+    resolveFirstRunnableTool,
+    testToolCandidate,
+    ResolvedTool,
     handleSquirrelStartup,
     AppUpdateService
 } from './infrastructure';
@@ -73,9 +81,10 @@ class Container {
  * Application class
  */
 class Application {
-    private mainWindow: BrowserWindow | null = null;
+    private mainWindow: BrowserWindowType | null = null;
     private container: Container;
     private downloadHandlers: DownloadHandlers | null = null;
+    private manageQueueUseCase: ManageQueueUseCase | null = null;
 
     constructor() {
         this.container = Container.getInstance();
@@ -89,6 +98,12 @@ class Application {
 
         // Initialize dependency injection container
         await this.initializeContainer();
+
+        // Register IPC handlers before the renderer is loaded. The renderer
+        // calls settings:get as soon as it mounts; registering afterwards (as
+        // this used to) raced with tool checks and produced
+        // "No handler registered for 'settings:get'".
+        this.registerIpcHandlers();
 
         // Create main window early so user sees loading UI during first-run installations
         this.createMainWindow();
@@ -116,8 +131,6 @@ class Application {
         await this.processRestoredQueue();
         this.sendInstallProgress('Processing queue...', 80);
 
-        // Register IPC handlers
-        await this.registerIpcHandlers();
         this.sendInstallProgress('Ready', 100);
 
         const elapsedTime = Date.now() - startTime;
@@ -159,6 +172,24 @@ class Application {
         this.container.register('errorCategorizer', errorCategorizer);
         this.container.register('queuePersistence', queuePersistence);
 
+        // Cookies are optional and opt-in. Forcing --cookies-from-browser here
+        // breaks every request on machines where Chrome/Edge cookies cannot be
+        // decrypted (DPAPI app-bound encryption). Users who need authenticated
+        // YouTube access can set one of these environment variables.
+        const cookiesFile = process.env.YTDLP_COOKIES_FILE?.trim();
+        const cookiesFromBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
+        if (cookiesFile || cookiesFromBrowser) {
+            setCookieConfig({
+                cookiesFile: cookiesFile || undefined,
+                cookiesFromBrowser: cookiesFile ? undefined : cookiesFromBrowser,
+                fallbackBrowsers: []
+            });
+            logger.info('Configured optional yt-dlp cookies', {
+                cookiesFile: cookiesFile || undefined,
+                cookiesFromBrowser: cookiesFile ? undefined : cookiesFromBrowser
+            });
+        }
+
         // Create download queue
         const settings = await settingsStore.load();
         const queue: DownloadQueue = {
@@ -197,95 +228,96 @@ class Application {
         const ffmpegInstaller = new FfmpegInstaller(logger);
         const denoInstaller = new DenoInstaller(logger);
 
+        const sendProgress = (message: string, percent: number) => {
+            if (onProgress) onProgress({ message, percent });
+        };
+
+        const bundledCandidate = {
+            id: 'bundled' as const,
+            label: 'bundled yt-dlp',
+            command: ytDlpInstaller.getExecutablePath(),
+            prefixArgs: []
+        };
+
+        const keepBundledCurrent = async (tool: ResolvedTool | null): Promise<ResolvedTool | null> => {
+            if (!tool || tool.id !== 'bundled') return tool;
+            if (!isYtDlpVersionOlderThan(tool.version, RECOMMENDED_YT_DLP_VERSION)) return tool;
+
+            logger.info('Bundled yt-dlp is outdated, updating safely...', {
+                version: tool.version,
+                recommendedVersion: RECOMMENDED_YT_DLP_VERSION
+            });
+
+            const updateResult = await ytDlpInstaller.update();
+            if (!updateResult.success) {
+                logger.error(
+                    'Bundled yt-dlp update failed; continuing with the existing working version',
+                    new Error(updateResult.error || 'Unknown update error')
+                );
+                return tool;
+            }
+
+            return await testToolCandidate(bundledCandidate) ?? tool;
+        };
+
+        const detectYtDlp = async (): Promise<ResolvedTool | null> => {
+            const existing = await resolveFirstRunnableTool(
+                buildYtDlpCandidates(ytDlpInstaller.getExecutablePath())
+            );
+            const current = await keepBundledCurrent(existing);
+            if (current) return current;
+
+            logger.info('No working yt-dlp found, downloading...');
+            sendProgress('Downloading yt-dlp...', 15);
+
+            const installResult = await ytDlpInstaller.install();
+            if (!installResult.success) {
+                logger.error('Failed to download yt-dlp', new Error(installResult.error || 'Unknown error'));
+                return null;
+            }
+
+            return keepBundledCurrent(await testToolCandidate(bundledCandidate));
+        };
+
         try {
             logger.info('Checking yt-dlp, JavaScript runtime, and ffmpeg installation...');
-
-            const sendProgress = (message: string, percent: number) => {
-                if (onProgress) onProgress({ message, percent });
-            };
-
             sendProgress('Checking yt-dlp...', 5);
 
-            // First check if yt-dlp is in system PATH
-            logger.info('Checking system yt-dlp...');
-            const { installed, version } = await ytDlpExecutor.checkInstallation();
-
-            if (!installed) {
-                logger.info('yt-dlp not found in system PATH, checking bundled version...');
-                sendProgress('Downloading yt-dlp...', 10);
-
-                // Check if we have a bundled version
-                if (ytDlpInstaller.isInstalled()) {
-                    const bundledPath = ytDlpInstaller.getExecutablePath();
-                    logger.info('Found bundled yt-dlp, setting path...', { path: bundledPath });
-                    ytDlpExecutor.setExecutablePath(bundledPath);
-
-                    const { installed: bundledInstalled, version: bundledVersion } = await ytDlpExecutor.checkInstallation();
-
-                    if (bundledInstalled) {
-                        if (isYtDlpVersionOlderThan(bundledVersion, MIN_SUPPORTED_YT_DLP_VERSION)) {
-                            logger.info('Bundled yt-dlp is outdated, updating safely...', {
-                                version: bundledVersion,
-                                minimumVersion: MIN_SUPPORTED_YT_DLP_VERSION
-                            });
-                            const updateResult = await ytDlpInstaller.update();
-
-                            if (updateResult.success) {
-                                const { version: updatedVersion } = await ytDlpExecutor.checkInstallation();
-                                logger.info('Bundled yt-dlp updated', { version: updatedVersion, path: bundledPath });
-                            } else {
-                                logger.error(
-                                    'Bundled yt-dlp update failed; continuing with the existing working version',
-                                    new Error(updateResult.error || 'Unknown update error')
-                                );
-                            }
-                        } else {
-                            logger.info('Using bundled yt-dlp', { version: bundledVersion, path: bundledPath });
-                        }
-                    } else {
-                        logger.error('Bundled yt-dlp exists but not working, re-downloading...');
-                        sendProgress('Re-downloading yt-dlp...', 15);
-                        const result = await ytDlpInstaller.install();
-
-                        if (result.success) {
-                            ytDlpExecutor.setExecutablePath(bundledPath);
-                            const { version: newVersion } = await ytDlpExecutor.checkInstallation();
-                            logger.info('yt-dlp re-downloaded successfully', { version: newVersion });
-                        } else {
-                            logger.error('Failed to re-download yt-dlp', new Error(result.error || 'Unknown error'));
-                        }
-                    }
-                } else {
-                    // Neither system nor bundled version found - download it
-                    logger.info('yt-dlp not found, downloading...');
-                    sendProgress('Downloading yt-dlp...', 15);
-
-                    const result = await ytDlpInstaller.install();
-
-                    if (result.success) {
-                        const bundledPath = ytDlpInstaller.getExecutablePath();
-                        ytDlpExecutor.setExecutablePath(bundledPath);
-
-                        const { installed: newInstalled, version: newVersion } = await ytDlpExecutor.checkInstallation();
-
-                        if (newInstalled) {
-                            logger.info('yt-dlp downloaded and installed successfully', { version: newVersion, path: bundledPath });
-                        } else {
-                            logger.error('yt-dlp downloaded but not working', new Error('Installation verification failed'));
-                        }
-                    } else {
-                        logger.error('Failed to download yt-dlp', new Error(result.error || 'Unknown error'));
-                    }
-                }
+            const tool = await detectYtDlp();
+            if (tool) {
+                ytDlpExecutor.setCommand(tool.command, tool.prefixArgs);
+                logger.info('Using yt-dlp', {
+                    source: tool.id,
+                    version: tool.version,
+                    command: tool.command
+                });
             } else {
-                logger.info('yt-dlp is installed in system PATH', { version });
+                logger.error('No working yt-dlp installation was found. Downloads will fail until it is available.');
             }
+
+            // Self-healing: the executor calls this when a download fails
+            // because the binary disappeared or was replaced by an invalid file.
+            ytDlpExecutor.setRepairHandler(async () => {
+                sendProgress('Repairing yt-dlp...', 15);
+                const repaired = await detectYtDlp();
+                if (!repaired) return false;
+
+                ytDlpExecutor.setCommand(repaired.command, repaired.prefixArgs);
+                const check = await ytDlpExecutor.checkInstallation();
+                if (check.installed) {
+                    logger.info('yt-dlp repaired successfully', {
+                        source: repaired.id,
+                        version: check.version
+                    });
+                }
+                return check.installed;
+            });
 
             sendProgress('Checking Deno runtime...', 25);
 
             // Full YouTube format extraction requires a JavaScript runtime.
             logger.info('Checking Deno JavaScript runtime...');
-            if (!denoInstaller.isInstalled()) {
+            if (!denoInstaller.isInstalled() || !(await denoInstaller.isRunnable())) {
                 sendProgress('Downloading Deno runtime...', 30);
                 const result = await denoInstaller.install();
                 if (!result.success) {
@@ -296,60 +328,50 @@ class Application {
                 }
             }
 
-            if (denoInstaller.isInstalled()) {
+            if (denoInstaller.isInstalled() && await denoInstaller.isRunnable()) {
                 const denoPath = denoInstaller.getExecutablePath();
                 ytDlpExecutor.setJavaScriptRuntimePath(denoPath);
                 logger.info('Using bundled Deno runtime for yt-dlp', { path: denoPath });
+            } else {
+                ytDlpExecutor.setJavaScriptRuntimePath('');
+                logger.info('Deno runtime unavailable; continuing without a JavaScript runtime');
             }
 
             sendProgress('Checking ffmpeg...', 35);
-
-            // Check and install ffmpeg
             logger.info('Checking ffmpeg installation...');
 
-            if (!ffmpegInstaller.isInstalled()) {
-                logger.info('ffmpeg not found, downloading...');
-                sendProgress('Downloading ffmpeg...', 40);
-
-                const result = await ffmpegInstaller.install();
-
-                if (result.success) {
-                    const ffmpegDir = ffmpegInstaller.getBinDirectory();
-                    ytDlpExecutor.setFfmpegLocation(ffmpegDir);
-                    logger.info('ffmpeg downloaded and installed successfully', { path: ffmpegDir });
-                } else {
-                    logger.error('Failed to download ffmpeg', new Error(result.error || 'Unknown error'));
-                }
+            const ffmpegState = await ffmpegInstaller.ensureAvailable();
+            if (ffmpegState.available) {
+                // location is undefined when ffmpeg is on PATH.
+                ytDlpExecutor.setFfmpegLocation(ffmpegState.location ?? null);
+                ytDlpExecutor.setFfmpegAvailable(true);
+                logger.info('ffmpeg available', {
+                    source: ffmpegState.source,
+                    location: ffmpegState.location ?? 'PATH',
+                    version: ffmpegState.version
+                });
             } else {
-                const ffmpegDir = ffmpegInstaller.getBinDirectory();
-                ytDlpExecutor.setFfmpegLocation(ffmpegDir);
-                logger.info('Using bundled ffmpeg', { path: ffmpegDir });
+                ytDlpExecutor.setFfmpegAvailable(false);
+                logger.error(
+                    'ffmpeg is unavailable. Video downloads will use pre-merged formats and audio downloads will be saved as m4a.',
+                    new Error(ffmpegState.error || 'ffmpeg could not be installed')
+                );
             }
 
-            // Final verification with detailed logging
-            logger.info('Final verification of installations...');
             sendProgress('Verifying installations...', 45);
 
             const finalCheck = await ytDlpExecutor.checkInstallation();
             if (finalCheck.installed) {
-                logger.info('✓ yt-dlp verification successful', { version: finalCheck.version });
+                logger.info('yt-dlp verification successful', { version: finalCheck.version });
             } else {
-                logger.error('✗ yt-dlp verification failed - app may not work correctly');
-
-                // Try to force set bundled path if it exists
-                if (ytDlpInstaller.isInstalled()) {
-                    const forcePath = ytDlpInstaller.getExecutablePath();
-                    logger.info('Forcing bundled yt-dlp path...', { path: forcePath });
-                    ytDlpExecutor.setExecutablePath(forcePath);
-
-                    const forceCheck = await ytDlpExecutor.checkInstallation();
-                    logger.info('Force check result:', forceCheck);
-                }
+                logger.error('yt-dlp verification failed - downloads will use fallbacks where possible');
             }
 
-            const ffmpegExists = ffmpegInstaller.isInstalled();
-            logger.info('ffmpeg verification', { installed: ffmpegExists, path: ffmpegInstaller.getBinDirectory() });
-
+            logger.info('Tool verification complete', {
+                ytDlp: finalCheck.installed,
+                ffmpeg: ffmpegState.available,
+                deno: denoInstaller.isInstalled()
+            });
         } catch (error) {
             logger.error('Failed to check installations', error as Error);
         }
@@ -442,15 +464,15 @@ class Application {
         const logger = this.container.resolve<FileLogger>('logger');
         const queue = this.container.resolve<DownloadQueue>('queue');
 
-        // Check if there are pending tasks that need to be started
         const pendingTasks = queue.tasks.filter(t => t.status === 'pending');
-
         if (pendingTasks.length > 0) {
-            logger.info('Found pending tasks in restored queue, will start processing after IPC handlers registered', {
+            logger.info('Starting pending tasks from restored queue', {
                 pendingCount: pendingTasks.length
             });
-            // The actual processing will happen after IPC handlers are registered
-            // We'll trigger it from registerIpcHandlers after wiring is complete
+        }
+
+        if (this.manageQueueUseCase) {
+            await this.manageQueueUseCase.processQueue();
         }
     }
 
@@ -532,14 +554,14 @@ class Application {
                 resourcesPath: process.resourcesPath
             });
 
-            this.mainWindow.loadFile(rendererPath).catch((error) => {
+            this.mainWindow.loadFile(rendererPath).catch((error: Error) => {
                 logger.error('Failed to load renderer', error);
 
                 // Try alternative path
                 const altPath = path.join(__dirname, '..', '..', 'renderer', 'index.html');
                 logger.info('Trying alternative renderer path', { altPath });
 
-                this.mainWindow!.loadFile(altPath).catch((altError) => {
+                this.mainWindow!.loadFile(altPath).catch((altError: Error) => {
                     logger.error('Failed to load renderer from alternative path', altError);
                 });
             });
@@ -556,7 +578,7 @@ class Application {
     /**
          * Register all IPC handlers
          */
-    private async registerIpcHandlers(): Promise<void> {
+    private registerIpcHandlers(): void {
         const logger = this.container.resolve<FileLogger>('logger');
         const queue = this.container.resolve<DownloadQueue>('queue');
 
@@ -617,6 +639,7 @@ class Application {
             logger,
             manageQueueUseCase
         );
+        this.manageQueueUseCase = manageQueueUseCase;
 
         // Register IPC handlers
         const videoHandlers = new VideoHandlers(
@@ -651,16 +674,13 @@ class Application {
         const updateHandlers = new UpdateHandlers(updateService);
         updateHandlers.register();
 
-        // Process restored queue after all handlers are wired
-        await manageQueueUseCase.processQueue();
-
         logger.info('All IPC handlers registered');
     }
 
     /**
      * Get main window instance
      */
-    getMainWindow(): BrowserWindow | null {
+    getMainWindow(): BrowserWindowType | null {
         return this.mainWindow;
     }
 

@@ -86,6 +86,14 @@ export class ExecuteDownloadUseCase {
                 // Complete callback
                 () => {
                     this.handleDownloadComplete(task);
+                },
+                // Process ID changed (strategy retry or direct fallback)
+                (pid: number) => {
+                    task.processId = pid;
+                },
+                // Actual output path changed (ffmpeg-less audio fallback)
+                (outputPath: string) => {
+                    task.outputFilePath = outputPath;
                 }
             );
 
