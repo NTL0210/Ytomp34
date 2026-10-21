@@ -147,12 +147,37 @@ npm run test:electron-smoke  Verify the production preload API in Electron
 ## Troubleshooting
 
 If YouTube asks you to confirm that you are not a bot, the app retries with
-several yt-dlp extraction strategies. If every attempt fails, wait a few
-minutes, update yt-dlp, and try again.
+several yt-dlp extraction strategies (including the `web_embedded` and `mweb`
+clients) and updates its bundled yt-dlp when it is out of date. If every
+attempt fails, wait a few minutes and try again.
 
-If automatic installation fails, check the internet connection and whether the
-current user can write to the app data directory. Logs are stored under the
-application user-data directory in the `logs` folder.
+Authenticated access is optional. To use a cookies file exported from a
+signed-in browser (Netscape `cookies.txt` format), set it before launching:
+
+```powershell
+$env:YTDLP_COOKIES_FILE = "C:\Users\you\cookies.txt"
+```
+
+You can also try a browser cookie store explicitly:
+
+```powershell
+$env:YTDLP_COOKIES_FROM_BROWSER = "firefox"
+```
+
+Chrome and Edge cookie stores are often encrypted with Windows DPAPI and cannot
+be read by yt-dlp; when that happens the app disables that browser for the
+session and continues without cookies.
+
+If the yt-dlp executable is missing or corrupted, the app tests the bundled
+binary, the system `yt-dlp`, and Python's `yt_dlp` module, and reinstalls the
+bundled copy if none of them work. For direct media URLs it can also fall back
+to a built-in HTTP downloader.
+
+If ffmpeg is missing or fails during merging, video downloads automatically use
+a pre-merged format and audio downloads are saved as `.m4a` instead of MP3, so
+the download still completes. The app verifies ffmpeg by running it, checks the
+system PATH, and retries installation from a second mirror. Logs are stored
+under the application user-data directory in the `logs` folder.
 
 More details about extractor retries are available in
 [ANTI-BOT-FIXES-SUMMARY.md](ANTI-BOT-FIXES-SUMMARY.md).

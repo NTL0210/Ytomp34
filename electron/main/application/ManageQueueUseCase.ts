@@ -174,13 +174,14 @@ export class ManageQueueUseCase {
 
         for (const task of completedTasks) {
             try {
+                const outputPath = task.outputFilePath || task.filePath;
                 // Delete main file
-                if (fs.existsSync(task.filePath)) {
-                    fs.unlinkSync(task.filePath);
+                if (fs.existsSync(outputPath)) {
+                    fs.unlinkSync(outputPath);
                     deletedFiles++;
                 }
                 // Delete .part file if exists
-                const partFile = `${task.filePath}.part`;
+                const partFile = `${outputPath}.part`;
                 if (fs.existsSync(partFile)) {
                     fs.unlinkSync(partFile);
                     deletedFiles++;
@@ -344,18 +345,21 @@ export class ManageQueueUseCase {
                 });
             }
 
-            // Delete partial files if they exist
+            // Delete partial files if they exist. A fallback may have changed
+            // the extension (for example .m4a instead of .mp3), so clean both.
             try {
-                if (fs.existsSync(task.filePath)) {
-                    fs.unlinkSync(task.filePath);
-                    this.logger.info('Deleted partial file', { filePath: task.filePath });
-                }
+                const candidatePaths = Array.from(new Set([
+                    task.filePath,
+                    task.outputFilePath
+                ].filter((value): value is string => Boolean(value))));
 
-                // Also check for .part files (yt-dlp creates these)
-                const partFile = `${task.filePath}.part`;
-                if (fs.existsSync(partFile)) {
-                    fs.unlinkSync(partFile);
-                    this.logger.info('Deleted partial file', { filePath: partFile });
+                for (const candidatePath of candidatePaths) {
+                    for (const partialPath of [candidatePath, `${candidatePath}.part`]) {
+                        if (fs.existsSync(partialPath)) {
+                            fs.unlinkSync(partialPath);
+                            this.logger.info('Deleted partial file', { filePath: partialPath });
+                        }
+                    }
                 }
             } catch (error) {
                 this.logger.error('Failed to delete partial files', error as Error, {

@@ -285,10 +285,11 @@ export class DownloadHandlers {
     ): Promise<TaskActionResponse> {
         const task = this.getCompletedTask(request);
         if (!task) return { success: false, error: 'Completed task not found' };
-        if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
+        const filePath = task.outputFilePath || task.filePath;
+        if (!fs.existsSync(filePath)) return { success: false, error: 'Downloaded file no longer exists' };
 
         try {
-            const errorMessage = await shell.openPath(task.filePath);
+            const errorMessage = await shell.openPath(filePath);
             return errorMessage ? { success: false, error: errorMessage } : { success: true };
         } catch (error) {
             this.logger.error('Failed to open downloaded file', error as Error, { taskId: task.id });
@@ -302,10 +303,11 @@ export class DownloadHandlers {
     ): Promise<TaskActionResponse> {
         const task = this.getCompletedTask(request);
         if (!task) return { success: false, error: 'Completed task not found' };
-        if (!fs.existsSync(task.filePath)) return { success: false, error: 'Downloaded file no longer exists' };
+        const filePath = task.outputFilePath || task.filePath;
+        if (!fs.existsSync(filePath)) return { success: false, error: 'Downloaded file no longer exists' };
 
         try {
-            shell.showItemInFolder(task.filePath);
+            shell.showItemInFolder(filePath);
             return { success: true };
         } catch (error) {
             this.logger.error('Failed to show downloaded file', error as Error, { taskId: task.id });
