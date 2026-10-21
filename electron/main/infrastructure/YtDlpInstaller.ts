@@ -13,6 +13,12 @@ import { FileLogger } from './Logger';
 
 export const MIN_SUPPORTED_YT_DLP_VERSION = '2026.06.09';
 
+/**
+ * Version with the extractor fixes this app was built and tested against.
+ * Startup updates the bundled binary when it is older than this.
+ */
+export const RECOMMENDED_YT_DLP_VERSION = '2026.08.19';
+
 export function isYtDlpVersionOlderThan(version: string | undefined, minimum: string): boolean {
   const normalize = (value: string | undefined): number | null => {
     const match = value?.trim().match(/^(\d{4})\.(\d{2})\.(\d{2})/);

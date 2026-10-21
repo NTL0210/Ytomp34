@@ -13,6 +13,8 @@ export interface DownloadTask {
   speed: string;                          // Download speed (e.g., "1.5MiB/s")
   eta: string;                            // Estimated time remaining (e.g., "00:05:23")
   readonly filePath: string;              // Target file path
+  /** Actual output path when a fallback changes the extension (e.g. m4a instead of mp3). */
+  outputFilePath?: string;
   readonly selectedFormat: FormatType;    // Selected format (mp4 or mp3)
   readonly selectedQuality: string;       // Selected quality code
   retryCount: number;                     // Number of retry attempts (0-3)

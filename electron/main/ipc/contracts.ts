@@ -14,29 +14,29 @@ export type { AppUpdateStatus } from '../infrastructure/AppUpdateService';
 // ============================================================================
 
 export interface FetchVideoInfoRequest {
-  url: string;
+    url: string;
 }
 
 export interface FetchVideoInfoResponse {
-  success: boolean;
-  data?: Video;
-  error?: {
-    type: ErrorType;
-    message: string;
-  };
+    success: boolean;
+    data?: Video;
+    error?: {
+        type: ErrorType;
+        message: string;
+    };
 }
 
 export interface FetchPlaylistInfoRequest {
-  url: string;
+    url: string;
 }
 
 export interface FetchPlaylistInfoResponse {
-  success: boolean;
-  data?: PlaylistInfo;
-  error?: {
-    type: ErrorType;
-    message: string;
-  };
+    success: boolean;
+    data?: PlaylistInfo;
+    error?: {
+        type: ErrorType;
+        message: string;
+    };
 }
 
 // ============================================================================
@@ -44,59 +44,63 @@ export interface FetchPlaylistInfoResponse {
 // ============================================================================
 
 export interface StartDownloadRequest {
-  url: string;
-  videoTitle: string;
-  format: 'mp4' | 'mp3';
-  quality: string;
+    url: string;
+    videoTitle: string;
+    format: 'mp4' | 'mp3';
+    quality: string;
 }
 
 export interface StartDownloadResponse {
-  success: boolean;
-  taskId?: string;
-  error?: {
-    type: 'invalid_params' | 'queue_full' | 'unknown';
-    message: string;
-  };
+    success: boolean;
+    taskId?: string;
+    error?: {
+        type: 'invalid_params' | 'queue_full' | 'unknown' | 'permission_error';
+        message: string;
+    };
 }
 
 export interface PauseDownloadRequest {
-  taskId: string;
+    taskId: string;
 }
 
 export interface PauseDownloadResponse {
-  success: boolean;
-  error?: string;
+    success: boolean;
+    error?: string;
 }
 
 export interface ResumeDownloadRequest {
-  taskId: string;
+    taskId: string;
 }
 
 export interface ResumeDownloadResponse {
-  success: boolean;
-  error?: string;
+    success: boolean;
+    error?: string;
 }
 
 export interface CancelDownloadRequest {
-  taskId: string;
+    taskId: string;
 }
 
 export interface CancelDownloadResponse {
-  success: boolean;
-  error?: string;
+    success: boolean;
+    error?: string;
 }
 
 export interface TaskActionRequest {
-  taskId: string;
+    taskId: string;
 }
 
 export interface TaskActionResponse {
-  success: boolean;
-  error?: string;
+    success: boolean;
+    error?: string;
 }
 
 export interface ClearCompletedResponse extends TaskActionResponse {
-  removedCount: number;
+    removedCount: number;
+}
+
+export interface DeleteCompletedFilesResponse extends TaskActionResponse {
+    removedCount: number;
 }
 
 // ============================================================================
@@ -104,46 +108,46 @@ export interface ClearCompletedResponse extends TaskActionResponse {
 // ============================================================================
 
 export interface ProgressUpdateEvent {
-  taskId: string;
-  progress: number;
-  speed: string;
-  eta: string;
-  status: DownloadStatus;
+    taskId: string;
+    progress: number;
+    speed: string;
+    eta: string;
+    status: DownloadStatus;
 }
 
 export interface QueueStateEvent {
-  tasks: DownloadTask[];
+    tasks: DownloadTask[];
 }
 
 // ============================================================================
 // Settings Contracts
 // ============================================================================
 
-export interface GetSettingsRequest {}
+export interface GetSettingsRequest { }
 
 export interface GetSettingsResponse {
-  success: boolean;
-  data?: Settings;
+    success: boolean;
+    data?: Settings;
 }
 
 export interface UpdateSettingsRequest {
-  theme?: 'light' | 'dark';
-  downloadDirectory?: string;
-  concurrentLimit?: number;
+    theme?: 'light' | 'dark';
+    downloadDirectory?: string;
+    concurrentLimit?: number;
 }
 
 export interface UpdateSettingsResponse {
-  success: boolean;
-  data?: Settings;
-  error?: string;
+    success: boolean;
+    data?: Settings;
+    error?: string;
 }
 
-export interface SelectFolderRequest {}
+export interface SelectFolderRequest { }
 
 export interface SelectFolderResponse {
-  success: boolean;
-  path?: string;
-  cancelled: boolean;
+    success: boolean;
+    path?: string;
+    cancelled: boolean;
 }
 
 // ============================================================================
@@ -151,8 +155,8 @@ export interface SelectFolderResponse {
 // ============================================================================
 
 export interface AppUpdateResponse {
-  success: boolean;
-  data: AppUpdateStatus;
+    success: boolean;
+    data: AppUpdateStatus;
 }
 
 // ============================================================================
@@ -160,32 +164,33 @@ export interface AppUpdateResponse {
 // ============================================================================
 
 export const IPC_CHANNELS = {
-  // Video channels
-  VIDEO_FETCH_INFO: 'video:fetch-info',
-  VIDEO_FETCH_PLAYLIST: 'video:fetch-playlist',
-  
-  // Download channels
-  DOWNLOAD_START: 'download:start',
-  DOWNLOAD_PAUSE: 'download:pause',
-  DOWNLOAD_RESUME: 'download:resume',
-  DOWNLOAD_CANCEL: 'download:cancel',
-  DOWNLOAD_RETRY: 'download:retry',
-  DOWNLOAD_OPEN_FILE: 'download:open-file',
-  DOWNLOAD_SHOW_IN_FOLDER: 'download:show-in-folder',
-  DOWNLOAD_REMOVE_HISTORY: 'download:remove-history',
-  DOWNLOAD_CLEAR_COMPLETED: 'download:clear-completed',
-  DOWNLOAD_PROGRESS: 'download:progress',
-  DOWNLOAD_QUEUE_UPDATE: 'download:queue-update',
-  
-  // Settings channels
-  SETTINGS_GET: 'settings:get',
-  SETTINGS_UPDATE: 'settings:update',
-  SETTINGS_SELECT_FOLDER: 'settings:select-folder',
+    // Video channels
+    VIDEO_FETCH_INFO: 'video:fetch-info',
+    VIDEO_FETCH_PLAYLIST: 'video:fetch-playlist',
 
-  // Application update channels
-  UPDATE_GET_STATUS: 'update:get-status',
-  UPDATE_CHECK: 'update:check',
-  UPDATE_DOWNLOAD: 'update:download',
-  UPDATE_INSTALL: 'update:install',
-  UPDATE_STATUS: 'update:status'
+    // Download channels
+    DOWNLOAD_START: 'download:start',
+    DOWNLOAD_PAUSE: 'download:pause',
+    DOWNLOAD_RESUME: 'download:resume',
+    DOWNLOAD_CANCEL: 'download:cancel',
+    DOWNLOAD_RETRY: 'download:retry',
+    DOWNLOAD_OPEN_FILE: 'download:open-file',
+    DOWNLOAD_SHOW_IN_FOLDER: 'download:show-in-folder',
+    DOWNLOAD_REMOVE_HISTORY: 'download:remove-history',
+    DOWNLOAD_CLEAR_COMPLETED: 'download:clear-completed',
+    DOWNLOAD_DELETE_COMPLETED_FILES: 'download:delete-completed-files',
+    DOWNLOAD_PROGRESS: 'download:progress',
+    DOWNLOAD_QUEUE_UPDATE: 'download:queue-update',
+
+    // Settings channels
+    SETTINGS_GET: 'settings:get',
+    SETTINGS_UPDATE: 'settings:update',
+    SETTINGS_SELECT_FOLDER: 'settings:select-folder',
+
+    // Application update channels
+    UPDATE_GET_STATUS: 'update:get-status',
+    UPDATE_CHECK: 'update:check',
+    UPDATE_DOWNLOAD: 'update:download',
+    UPDATE_INSTALL: 'update:install',
+    UPDATE_STATUS: 'update:status'
 } as const;
