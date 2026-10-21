@@ -1,5 +1,4 @@
 import * as path from 'path';
-import * as fs from 'fs';
 import { CreateDownloadTaskUseCase } from '../../electron/main/application/CreateDownloadTaskUseCase';
 import { DownloadQueue } from '../../electron/main/domain/entities';
 import { FileSanitizer, Logger, SettingsStore } from '../../electron/main/infrastructure';
