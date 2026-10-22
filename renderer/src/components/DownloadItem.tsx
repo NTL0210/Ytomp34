@@ -28,10 +28,21 @@ interface DownloadTask {
   speed: string;
   eta: string;
   readonly filePath: string;
+  outputFilePath?: string;
   readonly selectedFormat: 'mp4' | 'mp3';
   readonly selectedQuality: string;
   retryCount: number;
   errorMessage?: string;
+  actualWidth?: number;
+  actualHeight?: number;
+  actualResolution?: string;
+  actualQuality?: string;
+  actualVideoCodec?: string;
+  actualAudioCodec?: string;
+  actualContainer?: string;
+  verified?: boolean;
+  hasAudio?: boolean;
+  qualityNote?: string;
   readonly createdAt: Date;
   updatedAt: Date;
   processId?: number;
@@ -77,6 +88,25 @@ function getStatusDisplay(status: DownloadTask['status']) {
   }
 }
 
+function getActualFormatLabel(task: DownloadTask): string {
+  const extension = task.outputFilePath?.split('.').pop()?.toUpperCase();
+  if (extension && ['MP4', 'MKV', 'WEBM', 'M4A', 'MP3'].includes(extension)) {
+    return extension;
+  }
+
+  const container = task.actualContainer?.toLowerCase() ?? '';
+  if (task.selectedFormat === 'mp3') {
+    if (container.includes('mp3')) return 'MP3';
+    if (container.includes('m4a')) return 'M4A';
+  } else {
+    if (container.includes('matroska')) return 'MKV';
+    if (container.includes('webm')) return 'WebM';
+    if (container.includes('mp4') || container.includes('mov')) return 'MP4';
+  }
+
+  return task.selectedFormat.toUpperCase();
+}
+
 export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
   const {
     pauseDownload,
@@ -97,7 +127,13 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
     : /^\d+p$/i.test(task.selectedQuality)
       ? task.selectedQuality
       : '';
-  const formatLabel = `${task.selectedFormat.toUpperCase()}${quality ? ` · ${quality}` : ''}`;
+  const requestedLabel = `${task.selectedFormat.toUpperCase()}${quality ? ` · ${quality}` : ''}`;
+  const completedQuality = task.actualResolution
+    || task.actualQuality
+    || (task.verified === false && quality ? `${quality} (requested)` : quality);
+  const formatLabel = task.status === 'completed'
+    ? `${getActualFormatLabel(task)}${completedQuality ? ` · ${completedQuality}` : ''}`
+    : requestedLabel;
   const hasProgress = task.status === 'downloading' || task.status === 'paused';
   const speed = task.status === 'downloading'
     && task.speed
@@ -115,6 +151,11 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
     eta,
     task.status === 'error' && task.retryCount > 0 ? `Retry ${task.retryCount}/3` : '',
     task.status === 'error' && progress > 0 ? `${progress.toFixed(1)}% downloaded` : '',
+    task.status === 'completed' && task.verified === false
+      ? (task.selectedFormat === 'mp4' ? 'Resolution unverified' : 'Audio unverified')
+      : '',
+    task.status === 'completed' && task.actualVideoCodec ? `Video ${task.actualVideoCodec}` : '',
+    task.status === 'completed' && task.actualAudioCodec ? `Audio ${task.actualAudioCodec}` : '',
   ].filter(Boolean);
 
   const handleDownloadAgain = () => {
@@ -174,6 +215,15 @@ export const DownloadItem: React.FC<DownloadItemProps> = ({ task }) => {
                 style={{ width: `${progress}%` }}
               />
             </div>
+          )}
+
+          {task.status === 'completed' && task.qualityNote && (
+            <p
+              className="mt-1.5 line-clamp-2 break-words text-[11px] leading-4 text-warning"
+              title={task.qualityNote}
+            >
+              {task.qualityNote}
+            </p>
           )}
 
           {task.status === 'error' && task.errorMessage && (

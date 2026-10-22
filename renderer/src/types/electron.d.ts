@@ -24,6 +24,14 @@ export interface Quality {
     readonly value: string;
     readonly bitrate?: number;
     readonly resolution?: string;
+    readonly width?: number;
+    readonly height?: number;
+    readonly fps?: number;
+    readonly formatId?: string;
+    readonly ext?: string;
+    readonly vcodec?: string;
+    readonly acodec?: string;
+    readonly isProgressive?: boolean;
 }
 
 interface DownloadTask {
@@ -35,10 +43,21 @@ interface DownloadTask {
     speed: string;
     eta: string;
     readonly filePath: string;
+    outputFilePath?: string;
     readonly selectedFormat: 'mp4' | 'mp3';
     readonly selectedQuality: string;
     retryCount: number;
     errorMessage?: string;
+    actualWidth?: number;
+    actualHeight?: number;
+    actualResolution?: string;
+    actualQuality?: string;
+    actualVideoCodec?: string;
+    actualAudioCodec?: string;
+    actualContainer?: string;
+    verified?: boolean;
+    hasAudio?: boolean;
+    qualityNote?: string;
     readonly createdAt: Date;
     updatedAt: Date;
     processId?: number;

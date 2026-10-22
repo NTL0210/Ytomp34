@@ -38,7 +38,7 @@ function download(
             outputPath,
             () => undefined,
             reject,
-            resolve,
+            () => resolve(),
             () => undefined,
             onOutputPath
         ).catch(reject);

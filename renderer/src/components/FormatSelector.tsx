@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useIPC } from '../hooks/useIPC';
-import type { Quality } from '../types/electron';
+import { getDefaultQualityValue } from '../utils/qualitySelection';
 
 type DownloadFormat = 'mp4' | 'mp3';
 
@@ -28,17 +28,6 @@ export const FormatSelector: React.FC = () => {
   const availableQualities = formats.find(format => format.type === selectedFormat)?.qualities ?? [];
   const hasMp4 = formats.some(format => format.type === 'mp4' && format.qualities.length > 0);
   const hasMp3 = formats.some(format => format.type === 'mp3' && format.qualities.length > 0);
-
-  const getDefaultQuality = (qualities: Quality[], format: DownloadFormat) => {
-    if (qualities.length === 0) return '';
-
-    if (format === 'mp3') {
-      const specificQualities = qualities.filter(quality => quality.value !== 'best');
-      return specificQualities.length > 0 ? specificQualities[0].value : qualities[0].value;
-    }
-
-    return qualities[0].value;
-  };
 
   // If a source only exposes one output type, select the type that can work.
   useEffect(() => {
@@ -63,7 +52,7 @@ export const FormatSelector: React.FC = () => {
       return;
     }
 
-    setSelectedQuality(getDefaultQuality(qualities, selectedFormat));
+    setSelectedQuality(getDefaultQualityValue(qualities, selectedFormat));
   }, [selectedFormat, currentVideo]);
 
   const handleDownload = async () => {

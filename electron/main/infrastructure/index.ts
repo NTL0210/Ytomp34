@@ -20,10 +20,13 @@ export {
 export { FfmpegInstaller, FfmpegAvailability } from './FfmpegInstaller';
 export {
   ExtractionStrategy,
+  VideoFormatPlan,
   buildExtractionStrategies,
   buildPlayerClientArgs,
   buildVideoFormatSelector,
+  buildVideoFormatPlans,
   buildAudioDownloadPlan,
+  parseVideoQualityHeight,
   isBotCheckError,
   isCookieAccessError,
   isToolMissingError,
@@ -33,6 +36,16 @@ export {
   isYouTubeUrl,
   replaceOutputExtension
 } from './ExtractionStrategies';
+export {
+  DownloadOutputMetadata,
+  MediaInspection,
+  buildResolutionReport,
+  formatDimensions,
+  getFfprobeCommand,
+  getQualityTier,
+  inspectMediaFile,
+  parseFfprobeOutput
+} from './MediaInspector';
 export { downloadDirectMedia, DirectMediaDownloadOptions, DirectMediaDownloadResult } from './DirectMediaDownloader';
 export {
   ToolCandidate,

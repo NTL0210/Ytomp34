@@ -68,11 +68,28 @@ export class FetchVideoInfoUseCase {
         this.timeout(60000)
       ]);
 
-      this.logger.info('Video metadata fetched successfully', { 
-        videoId: video.id, 
+      const videoFormat = video.availableFormats.find(format => format.type === 'mp4');
+      const audioFormat = video.availableFormats.find(format => format.type === 'mp3');
+
+      this.logger.info('Video metadata fetched successfully', {
+        videoId: video.id,
         title: video.title,
         duration: video.duration,
-        formatCount: video.availableFormats.length
+        formatCount: video.availableFormats.length,
+        videoQualities: videoFormat?.qualities.map(quality => ({
+          label: quality.label,
+          value: quality.value,
+          width: quality.width,
+          height: quality.height,
+          fps: quality.fps,
+          ext: quality.ext,
+          vcodec: quality.vcodec
+        })) ?? [],
+        audioQualities: audioFormat?.qualities.map(quality => ({
+          label: quality.label,
+          value: quality.value,
+          bitrate: quality.bitrate
+        })) ?? []
       });
 
       return {

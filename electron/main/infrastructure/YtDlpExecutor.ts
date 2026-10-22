@@ -1,4 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { app } from 'electron';
 import { PlaylistInfo, Video } from '../domain/entities';
 import { Format, Quality } from '../domain/value-objects';
@@ -10,7 +12,7 @@ import {
     buildAudioFormatSelector,
     buildExtractionStrategies,
     buildPlayerClientArgs,
-    buildVideoFormatSelector,
+    buildVideoFormatPlans,
     getDirectMediaExtension,
     isBotCheckError,
     isCookieAccessError,
@@ -18,20 +20,36 @@ import {
     isFfmpegError,
     isToolMissingError,
     isYouTubeUrl,
+    parseVideoQualityHeight,
     replaceOutputExtension
 } from './ExtractionStrategies';
+import {
+    DownloadOutputMetadata,
+    buildResolutionReport,
+    formatDimensions,
+    getQualityTier,
+    inspectMediaFile
+} from './MediaInspector';
 
 export { buildAudioFormatSelector };
 
 export interface YtDlpFormat {
     format_id?: string;
     ext?: string;
+    width?: number;
+    height?: number;
+    resolution?: string;
+    fps?: number;
     vcodec?: string;
     acodec?: string;
-    height?: number;
+    filesize?: number;
+    filesize_approx?: number;
     tbr?: number;
+    vbr?: number;
     abr?: number;
     format_note?: string;
+    protocol?: string;
+    has_drm?: boolean;
 }
 
 interface YtDlpMetadata {
@@ -90,6 +108,8 @@ export interface CookieConfig {
 const DEFAULT_COOKIE_CONFIG: CookieConfig = {
     fallbackBrowsers: []
 };
+
+const OUTPUT_MEDIA_EXTENSIONS = /\.(mp4|webm|mkv|mov|m4a|mp3|opus|ogg|oga|aac|flac|wav)$/i;
 
 /**
  * Set cookie configuration for yt-dlp.
@@ -171,54 +191,191 @@ export function buildJavaScriptRuntimeArgs(runtimePath: string | null): string[]
     ];
 }
 
-export function extractAvailableFormats(formats: YtDlpFormat[]): Format[] {
-    const videoHeights = new Set<number>();
-    const audioFormats: YtDlpFormat[] = [];
+interface VideoFormatCandidate {
+    formatId: string;
+    ext?: string;
+    width?: number;
+    height: number;
+    tier: number;
+    fps?: number;
+    tbr: number;
+    vcodec: string;
+    hasAudio: boolean;
+}
 
-    for (const format of formats) {
-        if (format.vcodec && format.vcodec !== 'none' && format.height) {
-            videoHeights.add(format.height);
+function positiveNumber(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? value
+        : undefined;
+}
+
+function getFormatDimensions(format: YtDlpFormat): { width?: number; height: number } | null {
+    const width = positiveNumber(format.width);
+    const height = positiveNumber(format.height);
+
+    if (height) {
+        return { width, height };
+    }
+
+    if (format.resolution) {
+        const dimensions = format.resolution.trim().match(/^(\d{2,5})\s*[x×]\s*(\d{2,5})$/i);
+        if (dimensions) {
+            const parsedWidth = Number(dimensions[1]);
+            const parsedHeight = Number(dimensions[2]);
+            if (parsedWidth > 0 && parsedHeight > 0) {
+                return { width: parsedWidth, height: parsedHeight };
+            }
         }
 
-        if (
+        const heightOnly = format.resolution.trim().match(/^(\d{2,5})p$/i);
+        if (heightOnly) {
+            return { height: Number(heightOnly[1]) };
+        }
+    }
+
+    return null;
+}
+
+function isDownloadableVideoFormat(format: YtDlpFormat): boolean {
+    const formatId = format.format_id?.trim();
+    if (!formatId || !format.vcodec || format.vcodec === 'none' || format.has_drm) {
+        return false;
+    }
+
+    const ext = format.ext?.toLowerCase();
+    if (ext === 'mhtml' || ext === 'none') return false;
+
+    if (format.protocol?.toLowerCase().includes('mhtml')) return false;
+    if (format.format_note && /storyboard|thumbnail/i.test(format.format_note)) return false;
+    if (/^(sb|storyboard)/i.test(formatId)) return false;
+
+    return getFormatDimensions(format) !== null;
+}
+
+function toVideoCandidate(format: YtDlpFormat): VideoFormatCandidate | null {
+    if (!isDownloadableVideoFormat(format)) return null;
+
+    const dimensions = getFormatDimensions(format);
+    if (!dimensions) return null;
+
+    const tier = getQualityTier(dimensions.width, dimensions.height) ?? dimensions.height;
+    const formatId = format.format_id!.trim();
+
+    return {
+        formatId,
+        ext: format.ext,
+        width: dimensions.width,
+        height: dimensions.height,
+        tier,
+        fps: positiveNumber(format.fps),
+        tbr: positiveNumber(format.tbr) ?? positiveNumber(format.vbr) ?? 0,
+        vcodec: format.vcodec!,
+        hasAudio: Boolean(format.acodec && format.acodec !== 'none')
+    };
+}
+
+function compareVideoCandidates(a: VideoFormatCandidate, b: VideoFormatCandidate): number {
+    return (b.tier - a.tier)
+        || ((b.fps ?? 0) - (a.fps ?? 0))
+        || (b.tbr - a.tbr)
+        || (Number(a.hasAudio) - Number(b.hasAudio))
+        || a.formatId.localeCompare(b.formatId);
+}
+
+function videoQualityLabel(candidate: VideoFormatCandidate): string {
+    const dimensions = formatDimensions(candidate.width, candidate.height);
+    if (!dimensions) return `${candidate.tier}p`;
+
+    const portrait = Boolean(
+        candidate.width &&
+        candidate.height &&
+        candidate.width < candidate.height
+    );
+    const fps = candidate.fps ? ` · ${Math.round(candidate.fps)} fps` : '';
+
+    return `${dimensions}${portrait ? ' (portrait)' : ''}${fps}`;
+}
+
+function buildVideoQualityOptions(formats: YtDlpFormat[]): Quality[] {
+    const candidates = formats
+        .map(toVideoCandidate)
+        .filter((candidate): candidate is VideoFormatCandidate => candidate !== null)
+        .sort(compareVideoCandidates);
+
+    // One choice per resolution tier. Showing every codec/container variant as
+    // a separate identical-looking row is misleading; the representative is
+    // the highest frame-rate/bitrate variant at that tier.
+    const bestByTier = new Map<number, VideoFormatCandidate>();
+    for (const candidate of candidates) {
+        if (!bestByTier.has(candidate.tier)) {
+            bestByTier.set(candidate.tier, candidate);
+        }
+    }
+
+    const ordered = Array.from(bestByTier.values()).sort(compareVideoCandidates);
+
+    return [
+        { label: 'Best available', value: 'best', resolution: 'best' },
+        ...ordered.map(candidate => ({
+            label: videoQualityLabel(candidate),
+            value: `${candidate.tier}p`,
+            resolution: candidate.width && candidate.height
+                ? `${Math.round(candidate.width)}x${Math.round(candidate.height)}`
+                : `${candidate.tier}p`,
+            width: candidate.width,
+            height: candidate.height,
+            fps: candidate.fps,
+            formatId: candidate.formatId,
+            ext: candidate.ext,
+            vcodec: candidate.vcodec,
+            isProgressive: candidate.hasAudio
+        }))
+    ];
+}
+
+export function extractAvailableFormats(formats: YtDlpFormat[]): Format[] {
+    const audioFormats = formats.filter(format =>
+        Boolean(
+            format.format_id &&
             format.acodec &&
             format.acodec !== 'none' &&
+            !format.has_drm &&
             (!format.vcodec || format.vcodec === 'none')
-        ) {
-            audioFormats.push(format);
-        }
-    }
+        )
+    );
 
     const result: Format[] = [];
-    const sortedHeights = Array.from(videoHeights).sort((a, b) => b - a);
+    const videoQualities = buildVideoQualityOptions(formats);
 
-    if (sortedHeights.length > 0) {
-        const qualities: Quality[] = [
-            { label: 'Best Quality', value: 'best', resolution: 'best' },
-            ...sortedHeights.map(height => ({
-                label: `${height}p`,
-                value: `${height}p`,
-                resolution: `${height}p`
-            }))
-        ];
-        result.push({ type: 'mp4', qualities });
+    if (videoQualities.length > 1) {
+        result.push({ type: 'mp4', qualities: videoQualities });
     }
 
+    const seenAudioIds = new Set<string>();
     const audioQualities: Quality[] = audioFormats
-        .filter(format => Boolean(format.abr))
+        .filter(format => positiveNumber(format.abr) !== undefined)
         .sort((a, b) => (b.abr || 0) - (a.abr || 0))
+        .filter(format => {
+            const id = format.format_id!;
+            if (seenAudioIds.has(id)) return false;
+            seenAudioIds.add(id);
+            return true;
+        })
         .slice(0, 5)
         .map(format => ({
             label: `${Math.round(format.abr ?? 0)}kbps`,
-            value: format.format_id ?? 'best',
-            bitrate: format.abr
+            value: format.format_id!,
+            bitrate: format.abr,
+            formatId: format.format_id,
+            ext: format.ext,
+            acodec: format.acodec
         }));
 
-    if (audioQualities.length > 0) {
+    if (audioFormats.length > 0) {
         result.push({
             type: 'mp3',
             qualities: [
-                { label: 'Best Quality', value: 'best' },
+                { label: 'Best available', value: 'best' },
                 ...audioQualities
             ]
         });
@@ -356,7 +513,7 @@ export interface YtDlpExecutor {
         outputPath: string,
         onProgress: (progress: ProgressData) => void,
         onError: (error: string) => void,
-        onComplete: () => void,
+        onComplete: (metadata?: DownloadOutputMetadata) => void,
         onProcessId?: (pid: number) => void,
         onOutputPath?: (outputPath: string) => void
     ): Promise<number>;
@@ -618,14 +775,23 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         outputPath: string,
         onProgress: (progress: ProgressData) => void,
         onError: (error: string) => void,
-        onComplete: () => void,
+        onComplete: (metadata?: DownloadOutputMetadata) => void,
         onProcessId?: (pid: number) => void,
         onOutputPath?: (outputPath: string) => void
     ): Promise<number> {
         const strategies = this.buildStrategies(url);
         let ffmpegAvailable = this.ffmpegAvailable;
+        const videoPlans = format === 'mp4'
+            ? buildVideoFormatPlans(quality, ffmpegAvailable)
+            : [];
+        let videoPlanIndex = 0;
+        // If ffmpeg is unavailable from the start, the only plan is a
+        // pre-merged format. Record that limitation up front so completion can
+        // report it even when the file itself is valid.
+        let fallbackReason: string | undefined = format === 'mp4' && videoPlans.length === 1
+            ? videoPlans[0].reason
+            : undefined;
         let strategyIndex = 0;
-        let ffmpegRetried = false;
         let repaired = false;
         let directTried = false;
         let settled = false;
@@ -657,9 +823,32 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                     onProgress,
                     signal: controller.signal
                 })
-                    .then(() => {
+                    .then(async () => {
                         this.directDownloads.delete(directId);
-                        onComplete();
+                        try {
+                            const metadata = await this.finalizeOutput({
+                                format,
+                                quality,
+                                candidates: [directOutputPath],
+                                fallbackPath: directOutputPath,
+                                fallbackReason,
+                                onOutputPath
+                            });
+
+                            if (!metadata) {
+                                onError('The direct download completed but the output file could not be found.');
+                                return;
+                            }
+
+                            if (format === 'mp4' && metadata.verified && !metadata.hasVideo) {
+                                onError('The downloaded file does not contain a video stream. Try a different quality or URL.');
+                                return;
+                            }
+
+                            onComplete(metadata);
+                        } catch (error) {
+                            onError(this.describeDownloadError(error instanceof Error ? error.message : String(error)));
+                        }
                     })
                     .catch(error => {
                         this.directDownloads.delete(directId);
@@ -673,6 +862,9 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
 
                 const strategy = strategies[Math.min(strategyIndex, strategies.length - 1)];
                 const attempt = ++attemptToken;
+                const videoPlan = format === 'mp4'
+                    ? videoPlans[Math.min(videoPlanIndex, videoPlans.length - 1)]
+                    : null;
                 const audioPlan = format === 'mp3'
                     ? buildAudioDownloadPlan(quality, ffmpegAvailable)
                     : null;
@@ -681,7 +873,14 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                     ? replaceOutputExtension(outputPath, audioPlan.outputExtension)
                     : outputPath;
 
-                if (effectiveOutputPath !== outputPath) {
+                // Video downloads use yt-dlp's actual extension. This matters
+                // for the pre-merged fallback: writing WebM bytes into a file
+                // named .mp4 would mislabel the result.
+                const outputArgument = format === 'mp4'
+                    ? replaceOutputExtension(outputPath, '.%(ext)s')
+                    : effectiveOutputPath;
+
+                if (audioPlan && effectiveOutputPath !== outputPath) {
                     onOutputPath?.(effectiveOutputPath);
                 }
 
@@ -694,8 +893,26 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
 
                 if (format === 'mp3' && audioPlan) {
                     args.push('-f', audioPlan.formatSelector, ...audioPlan.postProcessArgs);
+                    this.debug('Audio download plan:', {
+                        selector: audioPlan.formatSelector,
+                        outputExtension: audioPlan.outputExtension,
+                        fallbackReason
+                    });
+                } else if (videoPlan) {
+                    args.push('-f', videoPlan.selector);
+                    if (videoPlan.mergeOutputFormat) {
+                        args.push('--merge-output-format', videoPlan.mergeOutputFormat);
+                    }
+                    this.debug('Video download plan:', {
+                        requestedQuality: quality,
+                        selector: videoPlan.selector,
+                        mergeOutputFormat: videoPlan.mergeOutputFormat,
+                        planIndex: videoPlanIndex,
+                        fallbackReason
+                    });
                 } else {
-                    args.push('-f', buildVideoFormatSelector(quality, ffmpegAvailable));
+                    // Defensive fallback for an unexpected format value.
+                    args.push('-f', 'bestvideo+bestaudio/best');
                     args.push('--merge-output-format', 'mp4');
                 }
 
@@ -713,7 +930,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                     '3',
                     '--no-playlist',
                     '-o',
-                    effectiveOutputPath,
+                    outputArgument,
                     url
                 );
 
@@ -738,6 +955,8 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                 let errorOutput = '';
                 let lastProgressTime = Date.now();
                 let attemptFinished = false;
+                let destinationPath: string | null = null;
+                let mergedOutputPath: string | null = null;
                 const progressParser = new ProgressParserImpl();
                 const token = attempt;
 
@@ -771,15 +990,29 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                         this.disableCookieBrowser(strategy.cookiesFromBrowser);
                     }
 
-                    // ffmpeg failed even though it was available: retry with a
-                    // pre-merged format so the download still completes.
-                    if (isFfmpegError(rawMessage) && ffmpegAvailable && !ffmpegRetried) {
-                        ffmpegRetried = true;
-                        ffmpegAvailable = false;
-                        this.ffmpegAvailable = false;
-                        this.debug('ffmpeg failure detected, retrying without merging/transcoding');
-                        launch();
-                        return;
+                    // Never disable ffmpeg globally for one bad source. Video
+                    // retries walk through higher-quality -> MP4-compatible ->
+                    // pre-merged plans; audio retries keep the original stream.
+                    if (isFfmpegError(rawMessage)) {
+                        if (format === 'mp4' && videoPlanIndex < videoPlans.length - 1) {
+                            videoPlanIndex += 1;
+                            fallbackReason = videoPlans[videoPlanIndex].reason;
+                            this.debug('Video post-processing failed; using fallback plan:', {
+                                planIndex: videoPlanIndex,
+                                selector: videoPlans[videoPlanIndex].selector,
+                                reason: fallbackReason
+                            });
+                            launch();
+                            return;
+                        }
+
+                        if (format === 'mp3' && ffmpegAvailable) {
+                            ffmpegAvailable = false;
+                            fallbackReason = 'ffmpeg could not create MP3 audio, so the original audio stream was saved as M4A';
+                            this.debug('Audio post-processing failed; retrying without transcoding');
+                            launch();
+                            return;
+                        }
                     }
 
                     if (isToolMissingError(rawMessage) && !repaired) {
@@ -821,7 +1054,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                 };
 
                 child.stdout.on('data', data => {
-                    const lines = data.toString().split('\n');
+                    const lines = data.toString().split(/\r?\n/);
 
                     for (const line of lines) {
                         if (!line.trim()) continue;
@@ -832,7 +1065,24 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                             lastProgressTime = Date.now();
                         }
 
-                        if (line.includes('[download]') && line.includes('Destination:')) {
+                        const merged = line.match(/\[Merger\] Merging formats into\s+"?(.+?)"?\s*$/i);
+                        if (merged) {
+                            mergedOutputPath = this.cleanOutputPath(merged[1]);
+                        }
+
+                        const destination = line.match(/\[download\] Destination:\s+(.+)$/i);
+                        if (destination) {
+                            destinationPath = this.cleanOutputPath(destination[1]);
+                            lastProgressTime = Date.now();
+                        }
+
+                        const alreadyDownloaded = line.match(/\[download\]\s+(.+?)\s+has already been downloaded/i);
+                        if (alreadyDownloaded) {
+                            destinationPath = this.cleanOutputPath(alreadyDownloaded[1]);
+                            lastProgressTime = Date.now();
+                        }
+
+                        if (line.includes('[Merger]') || line.includes('has already been downloaded')) {
                             onProgress({
                                 percentage: 100,
                                 speed: 'Complete',
@@ -851,7 +1101,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
                     }
                 });
 
-                child.on('close', code => {
+                child.on('close', async code => {
                     settleAttempt();
 
                     if (token !== attemptToken || settled) return;
@@ -862,7 +1112,33 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
 
                     if (code === 0) {
                         settled = true;
-                        onComplete();
+
+                        try {
+                            const metadata = await this.finalizeOutput({
+                                format,
+                                quality,
+                                candidates: format === 'mp4'
+                                    ? [mergedOutputPath, destinationPath]
+                                    : [effectiveOutputPath],
+                                fallbackPath: format === 'mp4' ? outputPath : effectiveOutputPath,
+                                fallbackReason,
+                                onOutputPath
+                            });
+
+                            if (!metadata) {
+                                onError('The download completed but the output file could not be found. Check the download folder permissions and try again.');
+                                return;
+                            }
+
+                            if (format === 'mp4' && metadata.verified && !metadata.hasVideo) {
+                                onError('The downloaded file does not contain a video stream. Try a different quality or URL.');
+                                return;
+                            }
+
+                            onComplete(metadata);
+                        } catch (error) {
+                            onError(this.describeDownloadError(error instanceof Error ? error.message : String(error)));
+                        }
                         return;
                     }
 
@@ -1082,7 +1358,7 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
 
     private describeDownloadError(message: string): string {
         if (isFfmpegError(message)) {
-            return 'Audio/video processing failed - ffmpeg could not merge or convert the media. The download was retried without post-processing; if it still fails, reinstall ffmpeg from Settings.';
+            return 'Audio/video processing failed - ffmpeg could not merge or convert the media at the requested quality. Reinstall ffmpeg from Settings, or choose a lower quality that is available as a pre-merged format.';
         }
         if (/permission denied|EACCES|EPERM/i.test(message)) {
             return 'Permission denied - check download folder permissions';
@@ -1131,6 +1407,167 @@ export class YtDlpExecutorImpl implements YtDlpExecutor {
         });
 
         return result;
+    }
+
+    private async finalizeOutput(options: {
+        format: string;
+        quality: string;
+        candidates: Array<string | null | undefined>;
+        fallbackPath?: string;
+        fallbackReason?: string;
+        onOutputPath?: (outputPath: string) => void;
+    }): Promise<DownloadOutputMetadata | null> {
+        const outputPath = this.resolveOutputPath(options.candidates, options.fallbackPath);
+        if (!outputPath) return null;
+
+        options.onOutputPath?.(outputPath);
+
+        const inspection = await inspectMediaFile(outputPath, this.ffmpegLocation);
+        const requestedHeight = options.format === 'mp4'
+            ? parseVideoQualityHeight(options.quality)
+            : null;
+        const resolutionWarning = options.format === 'mp4'
+            ? buildResolutionReport({
+                requestedQuality: options.quality,
+                requestedHeight,
+                actualWidth: inspection.width,
+                actualHeight: inspection.height,
+                verified: inspection.verified,
+                hasAudio: inspection.verified ? inspection.hasAudio : undefined
+            })
+            : inspection.verified
+                ? (inspection.hasAudio ? undefined : 'The downloaded file has no audio stream.')
+                : 'The final audio stream could not be verified.';
+
+        const fallbackNote = options.fallbackReason
+            ? (options.fallbackReason.endsWith('.') ? options.fallbackReason : `${options.fallbackReason}.`)
+            : undefined;
+        const outputExtension = path.extname(outputPath).toLowerCase();
+        const containerNote = options.format === 'mp4' && (outputExtension === '.mkv' || outputExtension === '.webm')
+            ? `Saved as ${outputExtension === '.webm' ? 'WebM' : 'MKV'} to preserve the selected video and audio streams without re-encoding.`
+            : undefined;
+        const warning = [resolutionWarning, fallbackNote, containerNote]
+            .filter((note): note is string => Boolean(note))
+            .join(' ') || undefined;
+
+        const tier = getQualityTier(inspection.width, inspection.height);
+        const metadata: DownloadOutputMetadata = {
+            outputPath,
+            width: inspection.width,
+            height: inspection.height,
+            resolution: formatDimensions(inspection.width, inspection.height),
+            qualityTier: tier !== null ? `${tier}p` : undefined,
+            videoCodec: inspection.videoCodec,
+            audioCodec: inspection.audioCodec,
+            container: inspection.container,
+            hasVideo: inspection.hasVideo,
+            hasAudio: inspection.hasAudio,
+            verified: inspection.verified,
+            warning,
+            fallbackReason: options.fallbackReason
+        };
+
+        this.debug('Completed output:', {
+            outputPath: metadata.outputPath,
+            width: metadata.width,
+            height: metadata.height,
+            qualityTier: metadata.qualityTier,
+            videoCodec: metadata.videoCodec,
+            audioCodec: metadata.audioCodec,
+            container: metadata.container,
+            verified: metadata.verified,
+            warning: metadata.warning
+        });
+
+        return metadata;
+    }
+
+    private resolveOutputPath(
+        candidates: Array<string | null | undefined>,
+        fallbackPath?: string
+    ): string | null {
+        const seen = new Set<string>();
+
+        // Parsed Destination/Merger paths are authoritative. Skip temporary
+        // stream files so a leftover .f137.mp4 cannot be mistaken for the final
+        // merged output.
+        for (const candidate of candidates) {
+            if (!candidate || candidate.includes('%(ext)s') || seen.has(candidate)) continue;
+            seen.add(candidate);
+            if (this.isTemporaryOutput(candidate)) continue;
+
+            try {
+                if (fs.statSync(candidate).isFile()) return candidate;
+            } catch {
+                // Try the next candidate.
+            }
+        }
+
+        // The actual extension may differ from the requested one (.mkv for
+        // AV1/Opus, .webm for a pre-merged fallback, .m4a for audio). Search by
+        // the task's base name and choose the most recent media file.
+        const searchPaths = [...candidates, fallbackPath];
+        const scanned = new Set<string>();
+
+        for (const candidate of searchPaths) {
+            if (!candidate || candidate.includes('%(ext)s') || this.isTemporaryOutput(candidate)) {
+                continue;
+            }
+
+            const extension = path.extname(candidate);
+            const basePath = extension ? candidate.slice(0, -extension.length) : candidate;
+            const directory = path.dirname(candidate);
+            const key = `${directory}\0${basePath}`;
+            if (scanned.has(key)) continue;
+            scanned.add(key);
+
+            const prefix = `${path.basename(basePath)}.`;
+
+            try {
+                const files = fs.readdirSync(directory)
+                    .filter(name => name.startsWith(prefix)
+                        && OUTPUT_MEDIA_EXTENSIONS.test(name)
+                        && !/\.(part|ytdl|temp)$/i.test(name))
+                    .map(name => path.join(directory, name))
+                    .filter(file => {
+                        try {
+                            return fs.statSync(file).isFile();
+                        } catch {
+                            return false;
+                        }
+                    })
+                    .sort((a, b) => {
+                        try {
+                            return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+                        } catch {
+                            return 0;
+                        }
+                    });
+
+                if (files.length > 0) return files[0];
+            } catch {
+                // Directory may be temporarily unavailable; try the next candidate.
+            }
+        }
+
+        if (fallbackPath && !fallbackPath.includes('%(ext)s')) {
+            try {
+                if (fs.statSync(fallbackPath).isFile()) return fallbackPath;
+            } catch {
+                // The file may have been moved or removed.
+            }
+        }
+
+        return null;
+    }
+
+    private isTemporaryOutput(outputPath: string): boolean {
+        return /\.(part|ytdl|temp)$/i.test(outputPath)
+            || /\.f\d+\./i.test(path.basename(outputPath));
+    }
+
+    private cleanOutputPath(value: string): string {
+        return value.trim().replace(/^"|"$/g, '');
     }
 
     private async tryRepair(): Promise<boolean> {

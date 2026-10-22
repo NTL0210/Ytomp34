@@ -181,7 +181,12 @@ export function isDirectMediaUrl(url: string): boolean {
     return getDirectMediaExtension(url) !== null;
 }
 
-function parseHeight(quality: string): number | null {
+/**
+ * Parse the quality token sent by the renderer. The app only accepts a
+ * resolution tier (for example `1080p`) or `best`; returning null for anything
+ * else keeps arbitrary yt-dlp selector syntax out of the process arguments.
+ */
+export function parseVideoQualityHeight(quality: string): number | null {
     const match = quality.trim().match(/^(\d{2,4})p?$/i);
     if (!match) return null;
     const height = Number(match[1]);
@@ -189,25 +194,117 @@ function parseHeight(quality: string): number | null {
     return height;
 }
 
-/**
- * Build a safe video format selector.
- *
- * When ffmpeg is available separate video/audio streams are merged. When it is
- * not, a pre-merged format is requested so playback still works without any
- * post-processing step.
- */
-export function buildVideoFormatSelector(quality: string, ffmpegAvailable: boolean): string {
-    const heightLimit = parseHeight(quality);
+export interface VideoFormatPlan {
+    /** Format selector passed to -f. */
+    selector: string;
+    /**
+     * Container(s) requested when yt-dlp has to merge separate streams.
+     * `mp4/mkv` lets yt-dlp remux AV1/VP9 + Opus into MKV when MP4 cannot hold
+     * those codecs, instead of downgrading to lower-resolution MP4 streams.
+     */
+    mergeOutputFormat?: 'mp4' | 'mp4/mkv';
+    /** Explanation shown only when this plan is used as a fallback. */
+    reason: string;
+    /** Whether this plan needs yt-dlp's ffmpeg post-processing step. */
+    requiresFfmpeg: boolean;
+}
 
-    if (!ffmpegAvailable) {
-        return heightLimit
-            ? `best[height<=${heightLimit}][ext=mp4]/best[height<=${heightLimit}]/best`
-            : 'best[ext=mp4]/best';
+function buildHighestQualitySelector(heightLimit: number | null): string {
+    if (heightLimit === null) {
+        return 'bestvideo+bestaudio/best';
     }
 
-    return heightLimit
-        ? `bestvideo[height<=${heightLimit}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`
-        : 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best';
+    // The height branch handles landscape video; the width branch is the
+    // portrait equivalent because yt-dlp's height value is the long side for a
+    // vertical video. Prefer a separate video stream so the best resolution is
+    // not capped by a pre-merged MP4.
+    return [
+        `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`,
+        `bestvideo[width<=${heightLimit}]+bestaudio/best[width<=${heightLimit}]`
+    ].join('/');
+}
+
+function buildMp4CompatibleSelector(heightLimit: number | null): string {
+    if (heightLimit === null) {
+        return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]';
+    }
+
+    return [
+        `bestvideo[height<=${heightLimit}][ext=mp4]+bestaudio[ext=m4a]`,
+        `best[height<=${heightLimit}][ext=mp4]`,
+        `bestvideo[width<=${heightLimit}][ext=mp4]+bestaudio[ext=m4a]`,
+        `best[width<=${heightLimit}][ext=mp4]`
+    ].join('/');
+}
+
+function buildPreMergedSelector(heightLimit: number | null): string {
+    if (heightLimit === null) {
+        return 'best';
+    }
+
+    // Preserve the best genuinely available pre-merged resolution. Preferring
+    // an MP4 container here would choose a lower-resolution progressive MP4
+    // over a higher-resolution WebM/MKV format. The output template records the
+    // real extension and ffprobe reports the actual container.
+    return [
+        `best[height<=${heightLimit}]`,
+        `best[width<=${heightLimit}]`,
+        'best'
+    ].join('/');
+}
+
+/**
+ * Build the ordered video-download plans.
+ *
+ * The first plan preserves the highest genuinely available resolution and lets
+ * ffmpeg merge separate streams into MP4 when possible, falling back to MKV for
+ * codecs MP4 cannot hold (for example AV1/VP9 + Opus). The second plan only
+ * exists for sources whose best streams still cannot be muxed. The final plan
+ * is a pre-merged fallback for environments without ffmpeg. Every fallback
+ * carries a reason so the completion message can state what changed instead of
+ * claiming the requested quality was downloaded.
+ */
+export function buildVideoFormatPlans(
+    quality: string,
+    ffmpegAvailable: boolean
+): VideoFormatPlan[] {
+    const heightLimit = parseVideoQualityHeight(quality);
+
+    if (!ffmpegAvailable) {
+        return [{
+            selector: buildPreMergedSelector(heightLimit),
+            reason: 'ffmpeg is unavailable, so a pre-merged format was used; separate high-resolution streams could not be merged',
+            requiresFfmpeg: false
+        }];
+    }
+
+    return [
+        {
+            selector: buildHighestQualitySelector(heightLimit),
+            mergeOutputFormat: 'mp4/mkv',
+            reason: 'Selected the highest-resolution video and best audio streams',
+            requiresFfmpeg: true
+        },
+        {
+            selector: buildMp4CompatibleSelector(heightLimit),
+            mergeOutputFormat: 'mp4',
+            reason: 'The highest-quality streams could not be merged into MP4/MKV, so MP4-compatible streams were used instead',
+            requiresFfmpeg: true
+        },
+        {
+            selector: buildPreMergedSelector(heightLimit),
+            reason: 'Separate video and audio streams could not be merged, so a pre-merged format was used instead',
+            requiresFfmpeg: false
+        }
+    ];
+}
+
+/**
+ * Backwards-compatible single-selector helper. The executor uses the full plan
+ * list so it can retry only when a merge actually fails.
+ */
+export function buildVideoFormatSelector(quality: string, ffmpegAvailable: boolean): string {
+    return buildVideoFormatPlans(quality, ffmpegAvailable)[0].selector;
 }
 
 export interface AudioDownloadPlan {
