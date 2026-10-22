@@ -1,6 +1,6 @@
 import { DownloadTask, DownloadQueue } from '../domain/entities';
 import { DownloadStatus } from '../domain/value-objects';
-import { YtDlpExecutor, Logger, ProgressData } from '../infrastructure';
+import { YtDlpExecutor, Logger, ProgressData, DownloadOutputMetadata } from '../infrastructure';
 
 /**
  * Callback types for progress and status updates
@@ -83,9 +83,9 @@ export class ExecuteDownloadUseCase {
                 (error: string) => {
                     this.handleDownloadError(task, error);
                 },
-                // Complete callback
-                () => {
-                    this.handleDownloadComplete(task);
+                // Complete callback with verified output metadata
+                (metadata?: DownloadOutputMetadata) => {
+                    this.handleDownloadComplete(task, metadata);
                 },
                 // Process ID changed (strategy retry or direct fallback)
                 (pid: number) => {
@@ -107,16 +107,42 @@ export class ExecuteDownloadUseCase {
         }
     }
 
-    private handleDownloadComplete(task: DownloadTask): void {
+    private handleDownloadComplete(task: DownloadTask, metadata?: DownloadOutputMetadata): void {
         task.status = 'completed';
         task.progress = 100;
         task.updatedAt = new Date();
+
+        if (metadata) {
+            task.outputFilePath = metadata.outputPath;
+            task.actualWidth = metadata.width;
+            task.actualHeight = metadata.height;
+            task.actualResolution = metadata.resolution;
+            task.actualQuality = metadata.qualityTier;
+            task.actualVideoCodec = metadata.videoCodec;
+            task.actualAudioCodec = metadata.audioCodec;
+            task.actualContainer = metadata.container;
+            task.verified = metadata.verified;
+            task.hasAudio = metadata.hasAudio;
+            task.qualityNote = metadata.warning;
+        }
+
         this.onStatusChange(task.id, 'completed');
 
         // Clean up throttle tracking
         this.lastProgressUpdateTime.delete(task.id);
 
-        this.logger.info('Download completed', { taskId: task.id, filePath: task.filePath });
+        this.logger.info('Download completed', {
+            taskId: task.id,
+            filePath: task.outputFilePath || task.filePath,
+            requestedQuality: task.selectedQuality,
+            actualResolution: task.actualResolution,
+            actualQuality: task.actualQuality,
+            videoCodec: task.actualVideoCodec,
+            audioCodec: task.actualAudioCodec,
+            container: task.actualContainer,
+            verified: task.verified,
+            warning: task.qualityNote
+        });
 
         // Start next task in queue
         this.startNextTask();
@@ -144,6 +170,16 @@ export class ExecuteDownloadUseCase {
             task.speed = '0 B/s';
             task.eta = '--:--:--';
             task.processId = undefined; // Reset processId on retry
+            task.actualWidth = undefined;
+            task.actualHeight = undefined;
+            task.actualResolution = undefined;
+            task.actualQuality = undefined;
+            task.actualVideoCodec = undefined;
+            task.actualAudioCodec = undefined;
+            task.actualContainer = undefined;
+            task.verified = undefined;
+            task.hasAudio = undefined;
+            task.qualityNote = undefined;
             this.onStatusChange(task.id, 'pending');
 
             this.logger.info('Retrying download', {

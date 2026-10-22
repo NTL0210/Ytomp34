@@ -19,6 +19,21 @@ export interface DownloadTask {
   readonly selectedQuality: string;       // Selected quality code
   retryCount: number;                     // Number of retry attempts (0-3)
   errorMessage?: string;                  // Error message if status is 'error'
+  /** Actual dimensions reported by ffprobe after the download completed. */
+  actualWidth?: number;
+  actualHeight?: number;
+  /** Human-readable actual dimensions, for example "1920 × 1080". */
+  actualResolution?: string;
+  /** Actual short-side tier, for example "1080p". */
+  actualQuality?: string;
+  actualVideoCodec?: string;
+  actualAudioCodec?: string;
+  actualContainer?: string;
+  /** Whether ffprobe verified the file. Undefined when verification was not attempted. */
+  verified?: boolean;
+  hasAudio?: boolean;
+  /** Truthful explanation of a fallback or a requested/actual quality mismatch. */
+  qualityNote?: string;
   readonly createdAt: Date;               // Task creation timestamp
   updatedAt: Date;                        // Last update timestamp
   processId?: number;                     // yt-dlp process ID (for pause/resume/cancel)
