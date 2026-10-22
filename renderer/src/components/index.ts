@@ -12,4 +12,6 @@ export { FormatSelector } from './FormatSelector';
 export { DownloadItem } from './DownloadItem';
 export { DownloadQueue } from './DownloadQueue';
 export { Settings } from './Settings';
+export { Donation } from './Donation';
+export { Modal } from './Modal';
 export { ErrorNotification } from './ErrorNotification';

@@ -1,89 +1,138 @@
 /**
- * Settings Component
- * Displays download directory path and concurrent limit slider
- * Shows "Select Folder" button to change download directory
- * Validates: Requirements 11.4, 12.1, 12.2, 12.3, 12.4, 12.5, 21.1, 21.2, 21.3, 21.4, 21.5, 18.1, 18.2, 18.3, 18.4, 18.5
+ * Settings dialog: download location, concurrency, and update controls.
  */
 
-import React, { useState } from 'react';
-import { Folder, Settings as SettingsIcon } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Folder, Loader2, Settings2 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useIPC } from '../hooks/useIPC';
 import { AppUpdate } from './AppUpdate';
+import { Modal } from './Modal';
 
 export const Settings: React.FC = () => {
   const { settings } = useAppStore();
   const { selectFolder, updateSettings } = useIPC();
   const [isOpen, setIsOpen] = useState(false);
+  const [isSelectingFolder, setIsSelectingFolder] = useState(false);
+  const [concurrency, setConcurrency] = useState(settings.concurrentLimit);
 
-  const handleConcurrentLimitChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value, 10);
-    updateSettings({ concurrentLimit: value });
+  useEffect(() => {
+    setConcurrency(settings.concurrentLimit);
+  }, [settings.concurrentLimit]);
+
+  const handleConcurrentLimitChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(event.target.value, 10);
+    setConcurrency(value);
+    void updateSettings({ concurrentLimit: value });
+  };
+
+  const handleSelectFolder = async () => {
+    setIsSelectingFolder(true);
+    try {
+      await selectFolder();
+    } finally {
+      setIsSelectingFolder(false);
+    }
   };
 
   return (
-    <div className="w-full">
-      {/* Settings toggle button */}
+    <>
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-gray-800 dark:text-gray-200"
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="btn btn-ghost h-8 px-2.5"
         aria-label="Settings"
         title="Settings"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
       >
-        <SettingsIcon className="w-5 h-5" />
-        <span className="hidden sm:inline font-medium">Settings</span>
+        <Settings2 className="h-4 w-4" aria-hidden="true" />
+        <span className="hidden sm:inline">Settings</span>
       </button>
 
-      {/* Settings panel */}
-      {isOpen && (
-        <div className="mt-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
-          {/* Download directory */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Download Directory
-            </label>
-            <div className="flex gap-2">
-              <div className="flex-1 flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-300 text-sm">
-                <Folder className="w-4 h-4 flex-shrink-0" />
-                <span className="truncate">{settings.downloadDirectory || 'Not set'}</span>
+      <Modal
+        open={isOpen}
+        onClose={() => setIsOpen(false)}
+        title="Settings"
+        description="Download location, concurrency, and updates."
+        icon={<Settings2 className="h-4 w-4 text-muted" aria-hidden="true" />}
+      >
+        <div className="space-y-5">
+          <section aria-labelledby="settings-location-title">
+            <h3 id="settings-location-title" className="text-[13px] font-semibold text-ink">
+              Download location
+            </h3>
+            <p className="mt-0.5 text-[11px] leading-5 text-muted">
+              New files are saved to this folder.
+            </p>
+
+            <div className="mt-2.5 flex items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+                <Folder className="h-3.5 w-3.5 shrink-0 text-faint" aria-hidden="true" />
+                <span
+                  className="truncate font-mono text-[11px] text-ink"
+                  title={settings.downloadDirectory || undefined}
+                >
+                  {settings.downloadDirectory || 'No folder selected'}
+                </span>
               </div>
               <button
-                onClick={selectFolder}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium whitespace-nowrap"
+                type="button"
+                onClick={() => void handleSelectFolder()}
+                disabled={isSelectingFolder}
+                className="btn btn-secondary h-9 shrink-0"
               >
-                Select Folder
+                {isSelectingFolder && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                )}
+                {isSelectingFolder ? 'Opening' : 'Change'}
               </button>
             </div>
-          </div>
+          </section>
 
-          {/* Concurrent download limit */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Concurrent Downloads: {settings.concurrentLimit}
-            </label>
+          <section aria-labelledby="settings-concurrency-title">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 id="settings-concurrency-title" className="text-[13px] font-semibold text-ink">
+                Concurrent downloads
+              </h3>
+              <span className="text-[12px] font-medium tabular-nums text-ink">
+                {concurrency}
+              </span>
+            </div>
+            <p
+              id="settings-concurrency-description"
+              className="mt-0.5 text-[11px] leading-5 text-muted"
+            >
+              Files downloaded at the same time. Higher values use more bandwidth.
+            </p>
             <input
+              id="settings-concurrency"
               type="range"
               min="1"
               max="10"
-              value={settings.concurrentLimit}
+              step="1"
+              value={concurrency}
               onChange={handleConcurrentLimitChange}
-              className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+              className="mt-3 h-1.5 w-full cursor-pointer accent-accent"
+              aria-labelledby="settings-concurrency-title"
+              aria-describedby="settings-concurrency-description"
             />
-            <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <div className="mt-1 flex justify-between text-[10px] tabular-nums text-faint">
               <span>1</span>
-              <span>5</span>
               <span>10</span>
             </div>
-          </div>
+            <p className="mt-1 text-[10px] text-faint">Changes save automatically.</p>
+          </section>
 
-          {/* Info text */}
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Concurrent downloads control how many files download simultaneously. Higher values may use more bandwidth and system resources.
+          <section className="border-t border-border pt-5" aria-label="Application updates">
+            <AppUpdate />
+          </section>
+
+          <p className="border-t border-border pt-4 text-[10px] leading-4 text-faint">
+            Downloads are processed locally with yt-dlp and ffmpeg.
           </p>
-
-          <AppUpdate />
         </div>
-      )}
-    </div>
+      </Modal>
+    </>
   );
 };

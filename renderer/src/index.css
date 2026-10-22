@@ -1,42 +1,192 @@
 /**
- * Global styles with TailwindCSS
+ * Global design tokens and primitives.
+ * Light and dark themes share the same semantic token names.
  */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar styles */
+:root {
+  --color-canvas: 246 246 243;
+  --color-surface: 255 255 252;
+  --color-surface-2: 240 240 235;
+  --color-border: 222 221 214;
+  --color-border-strong: 202 201 192;
+  --color-ink: 27 29 27;
+  --color-muted: 88 91 84;
+  --color-faint: 108 111 103;
+  --color-accent: 20 85 204;
+  --color-accent-hover: 14 69 171;
+  --color-accent-contrast: 255 255 255;
+  --color-accent-soft: 233 240 253;
+  --color-success: 20 122 75;
+  --color-success-soft: 232 246 238;
+  --color-success-contrast: 255 255 255;
+  --color-warning: 154 88 0;
+  --color-warning-soft: 253 245 229;
+  --color-warning-contrast: 255 255 255;
+  --color-danger: 180 35 24;
+  --color-danger-soft: 254 242 240;
+  --color-danger-contrast: 255 255 255;
+  color-scheme: light;
+}
+
+.dark {
+  --color-canvas: 17 18 17;
+  --color-surface: 25 26 24;
+  --color-surface-2: 32 34 31;
+  --color-border: 47 49 44;
+  --color-border-strong: 65 68 61;
+  --color-ink: 239 240 235;
+  --color-muted: 165 168 158;
+  --color-faint: 138 141 132;
+  --color-accent: 112 160 255;
+  --color-accent-hover: 143 183 255;
+  --color-accent-contrast: 10 22 40;
+  --color-accent-soft: 27 41 63;
+  --color-success: 78 201 146;
+  --color-success-soft: 21 44 34;
+  --color-success-contrast: 5 31 20;
+  --color-warning: 240 180 96;
+  --color-warning-soft: 50 39 21;
+  --color-warning-contrast: 34 23 5;
+  --color-danger: 255 131 121;
+  --color-danger-soft: 56 28 26;
+  --color-danger-contrast: 39 7 5;
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink antialiased;
+    margin: 0;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  select option {
+    background-color: rgb(var(--color-surface));
+    color: rgb(var(--color-ink));
+  }
+
+  ::selection {
+    background-color: rgb(var(--color-accent) / 0.22);
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-lg border border-border bg-surface;
+  }
+
+  .section-label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.12em] text-faint;
+  }
+
+  .btn {
+    @apply inline-flex h-9 select-none items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 font-medium transition-colors duration-150;
+    font-size: 13px;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply bg-accent text-accent-contrast hover:bg-accent-hover active:bg-accent-hover;
+  }
+
+  .btn-secondary {
+    @apply border border-border bg-surface text-ink hover:border-border-strong hover:bg-surface-2;
+  }
+
+  .btn-ghost {
+    @apply text-muted hover:bg-surface-2 hover:text-ink;
+  }
+
+  .btn-danger {
+    @apply bg-danger text-danger-contrast hover:bg-danger/90;
+  }
+
+  .btn-ghost-danger {
+    @apply text-danger hover:bg-danger-soft;
+  }
+
+  .icon-btn {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors duration-150;
+    @apply hover:bg-surface-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .icon-btn-danger {
+    @apply hover:bg-danger-soft hover:text-danger;
+  }
+
+  .field {
+    @apply h-10 w-full rounded-md border border-border bg-surface px-3 text-ink transition-colors duration-150 placeholder:text-faint;
+    font-size: 13px;
+    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .select-field {
+    @apply h-10 w-full appearance-none rounded-md border border-border bg-surface pl-3 pr-9 text-ink transition-colors duration-150 placeholder:text-faint;
+    font-size: 13px;
+    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .checkbox-field {
+    @apply h-4 w-4 shrink-0 rounded-sm border-border text-accent accent-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface;
+  }
+}
+
 @layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--color-border-strong)) transparent;
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
-    @apply bg-gray-100 dark:bg-gray-800;
+    background: transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 dark:bg-gray-600 rounded-full;
+    background-color: rgb(var(--color-border-strong));
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-400 dark:bg-gray-500;
+    background-color: rgb(var(--color-muted));
   }
 }
 
-/* Base styles */
-body {
-  margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-#root {
-  min-height: 100vh;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

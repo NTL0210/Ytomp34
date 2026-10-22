@@ -1,139 +1,185 @@
 /**
- * FormatSelector Component
- * Displays MP4 and MP3 format options with quality selection
- * Defaults to highest available quality
- * Updates quality options when format changes
- * Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 18.1, 18.2, 18.3, 18.4, 18.5
+ * Format and quality selection for the media currently loaded.
  */
 
-import React, { useState, useEffect } from 'react';
-import { FileVideo, Music } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  Download,
+  FileVideo,
+  Loader2,
+  Music,
+} from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useIPC } from '../hooks/useIPC';
 import type { Quality } from '../types/electron';
 
+type DownloadFormat = 'mp4' | 'mp3';
+
 export const FormatSelector: React.FC = () => {
-    const { currentVideo, isLoading } = useAppStore();
-    const { startDownload } = useIPC();
+  const { currentVideo, isLoading } = useAppStore();
+  const { startDownload } = useIPC();
 
-    const [selectedFormat, setSelectedFormat] = useState<'mp4' | 'mp3'>('mp4');
-    const [selectedQuality, setSelectedQuality] = useState<string>('');
+  const [selectedFormat, setSelectedFormat] = useState<DownloadFormat>('mp4');
+  const [selectedQuality, setSelectedQuality] = useState<string>('');
 
-    // Get available qualities for selected format
-    const getAvailableQualities = () => {
-        if (!currentVideo) return [];
+  const formats = currentVideo?.availableFormats ?? [];
+  const availableQualities = formats.find(format => format.type === selectedFormat)?.qualities ?? [];
+  const hasMp4 = formats.some(format => format.type === 'mp4' && format.qualities.length > 0);
+  const hasMp3 = formats.some(format => format.type === 'mp3' && format.qualities.length > 0);
 
-        const format = currentVideo.availableFormats.find(f => f.type === selectedFormat);
-        return format?.qualities || [];
-    };
+  const getDefaultQuality = (qualities: Quality[], format: DownloadFormat) => {
+    if (qualities.length === 0) return '';
 
-    // Get the default quality (highest bitrate/resolution, skipping 'best' for MP3)
-    const getDefaultQuality = (qualities: Quality[]) => {
-        if (qualities.length === 0) return '';
-
-        if (selectedFormat === 'mp3') {
-            // For MP3, skip 'Best Quality' (value='best') and use highest bitrate specific format
-            const specificQualities = qualities.filter(q => q.value !== 'best');
-            if (specificQualities.length > 0) {
-                return specificQualities[0].value; // Already sorted by bitrate descending
-            }
-            // Fallback to 'best' if no specific qualities available
-            return qualities[0].value;
-        }
-
-        // For MP4 or if no specific MP3 qualities, use first (highest)
-        return qualities[0].value;
-    };
-
-    // Update selected quality when format changes or video loads
-    useEffect(() => {
-        const qualities = getAvailableQualities();
-
-        if (qualities.length > 0) {
-            // Default to highest quality (first in array for MP4, highest bitrate specific for MP3)
-            setSelectedQuality(getDefaultQuality(qualities));
-        }
-    }, [selectedFormat, currentVideo]);
-
-    const handleFormatChange = (format: 'mp4' | 'mp3') => {
-        setSelectedFormat(format);
-    };
-
-    const handleDownload = async () => {
-        if (!currentVideo || !selectedQuality) return;
-
-        await startDownload(
-            currentVideo.url,
-            currentVideo.title,
-            selectedFormat,
-            selectedQuality
-        );
-    };
-
-    const availableQualities = getAvailableQualities();
-    const canDownload = currentVideo && selectedQuality && !isLoading;
-
-    if (!currentVideo) {
-        return null;
+    if (format === 'mp3') {
+      const specificQualities = qualities.filter(quality => quality.value !== 'best');
+      return specificQualities.length > 0 ? specificQualities[0].value : qualities[0].value;
     }
 
-    return (
-        <div className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-4">
-            {/* Format selection */}
-            <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Format
-                </label>
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => handleFormatChange('mp4')}
-                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-colors ${selectedFormat === 'mp4'
-                            ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                            : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500'
-                            }`}
-                    >
-                        <FileVideo className="w-5 h-5" />
-                        <span className="font-medium">MP4 (Video)</span>
-                    </button>
-                    <button
-                        onClick={() => handleFormatChange('mp3')}
-                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-colors ${selectedFormat === 'mp3'
-                            ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                            : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500'
-                            }`}
-                    >
-                        <Music className="w-5 h-5" />
-                        <span className="font-medium">MP3 (Audio)</span>
-                    </button>
-                </div>
-            </div>
+    return qualities[0].value;
+  };
 
-            {/* Quality selection */}
-            <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Quality
-                </label>
-                <select
-                    value={selectedQuality}
-                    onChange={(e) => setSelectedQuality(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                    {availableQualities.map((quality) => (
-                        <option key={quality.value} value={quality.value}>
-                            {quality.label}
-                        </option>
-                    ))}
-                </select>
-            </div>
+  // If a source only exposes one output type, select the type that can work.
+  useEffect(() => {
+    if (!currentVideo) return;
 
-            {/* Download button */}
-            <button
-                onClick={handleDownload}
-                disabled={!canDownload}
-                className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-                {isLoading ? 'Starting...' : 'Download'}
-            </button>
-        </div>
+    const usableFormats = currentVideo.availableFormats.filter(format => format.qualities.length > 0);
+    if (usableFormats.length === 0) return;
+
+    if (!usableFormats.some(format => format.type === selectedFormat)) {
+      setSelectedFormat(usableFormats[0].type);
+    }
+  }, [currentVideo, selectedFormat]);
+
+  // Reset to the best available quality whenever the source or format changes.
+  useEffect(() => {
+    const qualities = currentVideo?.availableFormats.find(
+      format => format.type === selectedFormat
+    )?.qualities ?? [];
+
+    if (qualities.length === 0) {
+      setSelectedQuality('');
+      return;
+    }
+
+    setSelectedQuality(getDefaultQuality(qualities, selectedFormat));
+  }, [selectedFormat, currentVideo]);
+
+  const handleDownload = async () => {
+    if (!currentVideo || !selectedQuality) return;
+
+    await startDownload(
+      currentVideo.url,
+      currentVideo.title,
+      selectedFormat,
+      selectedQuality
     );
+  };
+
+  if (!currentVideo) return null;
+
+  const hasAnyFormats = formats.some(format => format.qualities.length > 0);
+  const canDownload = Boolean(selectedQuality) && !isLoading && hasAnyFormats;
+
+  return (
+    <div className="border-t border-border p-4">
+      <h3 className="text-[12px] font-semibold text-ink">Download options</h3>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+        <fieldset disabled={!hasAnyFormats}>
+          <legend className="section-label">Format</legend>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSelectedFormat('mp4')}
+              aria-pressed={selectedFormat === 'mp4'}
+              disabled={!hasMp4}
+              title={hasMp4 ? 'Download as MP4 video' : 'No MP4 video format is available'}
+              className={`flex h-9 items-center justify-center gap-2 rounded-md border text-[13px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-40 ${
+                selectedFormat === 'mp4'
+                  ? 'border-accent bg-accent-soft text-accent'
+                  : 'border-border bg-surface text-muted hover:border-border-strong hover:text-ink'
+              }`}
+            >
+              <FileVideo className="h-3.5 w-3.5" aria-hidden="true" />
+              Video
+              <span className="text-[10px] font-medium opacity-70">MP4</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedFormat('mp3')}
+              aria-pressed={selectedFormat === 'mp3'}
+              disabled={!hasMp3}
+              title={hasMp3 ? 'Download as MP3 audio' : 'No MP3 audio format is available'}
+              className={`flex h-9 items-center justify-center gap-2 rounded-md border text-[13px] font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-40 ${
+                selectedFormat === 'mp3'
+                  ? 'border-accent bg-accent-soft text-accent'
+                  : 'border-border bg-surface text-muted hover:border-border-strong hover:text-ink'
+              }`}
+            >
+              <Music className="h-3.5 w-3.5" aria-hidden="true" />
+              Audio
+              <span className="text-[10px] font-medium opacity-70">MP3</span>
+            </button>
+          </div>
+        </fieldset>
+
+        <div>
+          <label htmlFor="download-quality" className="section-label">
+            Quality
+          </label>
+          <div className="relative mt-1.5">
+            <select
+              id="download-quality"
+              value={selectedQuality}
+              onChange={event => setSelectedQuality(event.target.value)}
+              className="select-field h-9"
+              disabled={availableQualities.length === 0}
+            >
+              {availableQualities.length === 0 ? (
+                <option value="">No qualities available</option>
+              ) : (
+                availableQualities.map(quality => (
+                  <option key={quality.value} value={quality.value}>
+                    {quality.label}
+                  </option>
+                ))
+              )}
+            </select>
+            <ChevronDown
+              className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint"
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      {hasAnyFormats ? (
+        <button
+          type="button"
+          onClick={() => void handleDownload()}
+          disabled={!canDownload}
+          className="btn btn-primary mt-3 h-10 w-full"
+          aria-busy={isLoading}
+        >
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Download className="h-4 w-4" />
+          )}
+          {isLoading ? 'Working' : `Download ${selectedFormat.toUpperCase()}`}
+        </button>
+      ) : (
+        <div
+          role="status"
+          className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2.5 text-[11px] leading-5 text-warning"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>No downloadable video or audio formats were found for this link.</span>
+        </div>
+      )}
+    </div>
+  );
 };

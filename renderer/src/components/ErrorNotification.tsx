@@ -1,11 +1,9 @@
 /**
- * ErrorNotification Component
- * Displays user-friendly error messages with actionable guidance
- * Validates: Requirements 14.1, 14.2, 14.3, 14.4
+ * Inline error feedback with actionable guidance.
  */
 
 import React from 'react';
-import { AlertCircle, X, ExternalLink } from 'lucide-react';
+import { AlertCircle, ExternalLink, X } from 'lucide-react';
 import { ErrorDisplay } from '../constants/errorMessages';
 
 interface ErrorNotificationProps {
@@ -15,33 +13,36 @@ interface ErrorNotificationProps {
 
 export const ErrorNotification: React.FC<ErrorNotificationProps> = ({ error, onDismiss }) => {
   return (
-    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3">
-      <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <h3 className="text-sm font-semibold text-red-800 dark:text-red-200 mb-1">
-          {error.title}
-        </h3>
-        <p className="text-sm text-red-700 dark:text-red-300 mb-2">
-          {error.message}
-        </p>
-        {error.action && (
+    <div
+      role="alert"
+      className="flex items-start gap-3 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
+
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-semibold leading-5 text-ink">{error.title}</p>
+        <p className="mt-0.5 break-words text-[12px] leading-5 text-muted">{error.message}</p>
+        {error.action?.link && (
           <a
             href={error.action.link}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sm font-medium text-red-700 dark:text-red-300 hover:text-red-900 dark:hover:text-red-100 transition-colors"
+            className="mt-2 inline-flex items-center gap-1 rounded-sm text-[11px] font-medium text-danger hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60 focus-visible:ring-offset-2 focus-visible:ring-offset-danger-soft"
           >
             {error.action.label}
-            <ExternalLink className="w-3 h-3" />
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         )}
       </div>
+
       <button
+        type="button"
         onClick={onDismiss}
-        className="p-1 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+        className="icon-btn -mr-1 -mt-1 h-7 w-7 hover:bg-danger/10 hover:text-danger"
         aria-label="Dismiss error"
+        title="Dismiss"
       >
-        <X className="w-4 h-4 text-red-600 dark:text-red-400" />
+        <X className="h-3.5 w-3.5" />
       </button>
     </div>
   );

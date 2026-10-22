@@ -1,63 +1,95 @@
 /**
- * VideoInfo Component
- * Displays video title, duration (HH:MM:SS), and thumbnail
- * Shows placeholder when no video loaded
- * Validates: Requirements 2.5, 18.1, 18.2, 18.3, 18.4, 18.5
+ * Compact summary of the media whose metadata was successfully retrieved.
  */
 
-import React from 'react';
-import { Video } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Clock3, Film } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  return [hours, minutes, secs]
+    .map(value => value.toString().padStart(2, '0'))
+    .join(':');
+}
+
+function getHostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
 
 export const VideoInfo: React.FC = () => {
   const { currentVideo } = useAppStore();
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
 
-  // Format duration from seconds to HH:MM:SS
-  const formatDuration = (seconds: number): string => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
-    
-    return [hours, minutes, secs]
-      .map(v => v.toString().padStart(2, '0'))
-      .join(':');
-  };
+  useEffect(() => {
+    setThumbnailFailed(false);
+  }, [currentVideo?.thumbnailUrl]);
 
-  if (!currentVideo) {
-    return (
-      <div className="w-full p-8 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
-        <Video className="w-12 h-12 mb-2" />
-        <p className="text-sm">No video loaded</p>
-        <p className="text-xs">Enter a URL and click "Fetch Info" to get started</p>
-      </div>
-    );
-  }
+  if (!currentVideo) return null;
+
+  const title = currentVideo.title || 'Untitled media';
+  const hostname = getHostname(currentVideo.url);
+  const formats = currentVideo.availableFormats
+    .filter(format => format.qualities.length > 0)
+    .map(format => format.type.toUpperCase());
+  const hasThumbnail = Boolean(currentVideo.thumbnailUrl) && !thumbnailFailed;
 
   return (
-    <div className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-      <div className="flex flex-col md:flex-row gap-4 p-4">
-        {/* Thumbnail */}
-        <div className="flex-shrink-0">
-          <img
-            src={currentVideo.thumbnailUrl}
-            alt={currentVideo.title}
-            className="w-full md:w-48 h-auto rounded-lg object-cover"
-            onError={(e) => {
-              // Fallback if thumbnail fails to load
-              e.currentTarget.style.display = 'none';
-            }}
-          />
+    <div className="flex flex-col gap-3.5 p-4 sm:flex-row">
+      <div className="relative w-full shrink-0 overflow-hidden rounded-md border border-border bg-surface-2 sm:w-[140px]">
+        <div className="aspect-video">
+          {hasThumbnail ? (
+            <img
+              src={currentVideo.thumbnailUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              loading="lazy"
+              onError={() => setThumbnailFailed(true)}
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-faint">
+              <Film className="h-6 w-6" aria-hidden="true" />
+            </div>
+          )}
         </div>
-        
-        {/* Video details */}
-        <div className="flex-1 min-w-0">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2 truncate">
-            {currentVideo.title}
-          </h3>
-          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-            <span className="font-medium">Duration:</span>
-            <span>{formatDuration(currentVideo.duration)}</span>
-          </div>
+
+        {currentVideo.duration > 0 && (
+          <span className="absolute bottom-1.5 right-1.5 rounded-sm bg-black/75 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-white">
+            {formatDuration(currentVideo.duration)}
+          </span>
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <h2
+          className="line-clamp-2 text-[14px] font-semibold leading-5 text-ink"
+          title={title}
+        >
+          {title}
+        </h2>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+          {hostname && (
+            <span className="max-w-full truncate" title={currentVideo.url}>
+              {hostname}
+            </span>
+          )}
+          {currentVideo.duration > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <Clock3 className="h-3 w-3" aria-hidden="true" />
+              {formatDuration(currentVideo.duration)}
+            </span>
+          )}
+          <span>
+            {formats.length > 0 ? `${formats.join(' · ')} available` : 'No formats detected'}
+          </span>
         </div>
       </div>
     </div>

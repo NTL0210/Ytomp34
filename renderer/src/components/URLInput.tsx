@@ -1,96 +1,136 @@
 /**
- * URLInput Component
- * Displays input field for URL entry with validation
- * Shows error message for invalid URLs
- * Enables button only for valid URLs
- * Validates: Requirements 1.1, 1.2, 1.3, 1.4, 18.1, 18.2, 18.3, 18.4, 18.5
+ * Primary URL entry and metadata fetch action.
  */
 
-import React, { useState } from 'react';
-import { Link, AlertCircle } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { AlertCircle, Link2, Loader2, Search, X } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useIPC } from '../hooks/useIPC';
 
 export const URLInput: React.FC = () => {
   const [url, setUrl] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
-  const { isLoading } = useAppStore();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { currentVideo, isLoading } = useAppStore();
   const { fetchVideoInfo } = useIPC();
 
-  // Validate URL format
   const isValidUrl = (urlString: string): boolean => {
     if (!urlString.trim()) return false;
-    
+
     try {
-      new URL(urlString);
+      new URL(urlString.trim());
       return true;
     } catch {
       return false;
     }
   };
 
-  // Handle URL input change
-  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newUrl = e.target.value;
-    setUrl(newUrl);
-    
-    // Clear error when user starts typing
-    if (urlError) {
-      setUrlError(null);
-    }
+  const handleUrlChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setUrl(event.target.value);
+    if (urlError) setUrlError(null);
   };
 
-  // Handle fetch button click
   const handleFetch = async () => {
     if (!isValidUrl(url)) {
-      setUrlError('Please enter a valid URL');
+      setUrlError('Please enter a valid URL.');
       return;
     }
-    
+
     setUrlError(null);
-    await fetchVideoInfo(url);
+    await fetchVideoInfo(url.trim());
   };
 
-  // Handle Enter key press
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && isValidUrl(url) && !isLoading) {
-      handleFetch();
-    }
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || isLoading) return;
+    event.preventDefault();
+    void handleFetch();
+  };
+
+  const handleClear = () => {
+    setUrl('');
+    setUrlError(null);
+    inputRef.current?.focus();
   };
 
   const isValid = isValidUrl(url);
 
   return (
-    <div className="w-full space-y-2">
-      <div className="flex gap-2">
-        <div className="flex-1 relative">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2">
-            <Link className="w-5 h-5 text-gray-400" />
-          </div>
+    <div className="space-y-2">
+      <label htmlFor="media-url" className="sr-only">
+        Media URL
+      </label>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="relative min-w-0 flex-1">
+          <Link2
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-faint"
+            aria-hidden="true"
+          />
           <input
+            ref={inputRef}
+            id="media-url"
             type="text"
             value={url}
             onChange={handleUrlChange}
-            onKeyPress={handleKeyPress}
-            placeholder="Enter video URL..."
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onKeyDown={handleKeyDown}
+            title={url || undefined}
+            placeholder="Paste a video or audio URL"
+            className={`field h-10 pl-9 ${url ? 'pr-9' : ''} ${
+              urlError ? 'border-danger focus:border-danger focus:ring-danger/20' : ''
+            }`}
             disabled={isLoading}
+            aria-invalid={Boolean(urlError)}
+            aria-describedby={urlError ? 'media-url-error' : 'media-url-hint'}
+            autoFocus
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
           />
+
+          {url && !isLoading && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="icon-btn absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
+              aria-label="Clear URL"
+              title="Clear"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
+
         <button
-          onClick={handleFetch}
+          type="button"
+          onClick={() => void handleFetch()}
           disabled={!isValid || isLoading}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+          className={`btn h-10 shrink-0 px-4 sm:min-w-[122px] ${
+            currentVideo ? 'btn-secondary' : 'btn-primary'
+          }`}
+          aria-busy={isLoading}
         >
-          {isLoading ? 'Loading...' : 'Fetch Info'}
+          {isLoading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Search className="h-3.5 w-3.5" />
+          )}
+          {isLoading ? 'Fetching' : 'Fetch info'}
         </button>
       </div>
-      
-      {urlError && (
-        <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm">
-          <AlertCircle className="w-4 h-4" />
-          <span>{urlError}</span>
-        </div>
+
+      {urlError ? (
+        <p
+          id="media-url-error"
+          role="alert"
+          className="flex items-center gap-1.5 text-[11px] text-danger"
+        >
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {urlError}
+        </p>
+      ) : (
+        <p id="media-url-hint" className="sr-only">
+          Paste a video or audio URL, then press Enter to fetch details.
+        </p>
       )}
     </div>
   );
