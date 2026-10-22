@@ -7,10 +7,13 @@ import './index.css';
 if (!window.electronAPI) {
   console.error('electronAPI is not available! Preload script may have failed.');
   document.body.innerHTML = `
-    <div style="padding: 20px; font-family: sans-serif;">
-      <h1 style="color: red;">Error: Electron API not available</h1>
-      <p>The preload script failed to expose the Electron API.</p>
-      <p>Check the console for more details.</p>
+    <div class="flex min-h-screen items-center justify-center bg-canvas p-6">
+      <div class="w-full max-w-[460px] rounded-xl border border-border bg-surface p-6 shadow-dialog" role="alert">
+        <h1 class="text-[15px] font-semibold text-ink">Electron bridge unavailable</h1>
+        <p class="mt-1 text-[12px] leading-5 text-muted">
+          The desktop API did not load. Restart Ytomp34, and check the console if the problem continues.
+        </p>
+      </div>
     </div>
   `;
   throw new Error('electronAPI is not available');

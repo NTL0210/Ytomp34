@@ -1,152 +1,221 @@
 /**
- * DownloadQueue Component
- * Displays list of DownloadItem components
- * Shows empty state when queue is empty
- * Validates: Requirements 7.1, 7.2, 18.1, 18.2, 18.3, 18.4, 18.5
+ * Download queue with active and history views.
  */
 
-import React, { useMemo, useState } from 'react';
-import { Download, History, Trash2, AlertCircle } from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import { AlertTriangle, Download, History, Inbox, Trash2 } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
 import { useIPC } from '../hooks/useIPC';
 import { DownloadItem } from './DownloadItem';
+import { Modal } from './Modal';
 
 export const DownloadQueue: React.FC = () => {
-    const { downloadQueue } = useAppStore();
-    const { clearCompleted, deleteCompletedFiles } = useIPC();
-    const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-    const activeTasks = useMemo(
-        () => downloadQueue.filter(task => task.status !== 'completed'),
-        [downloadQueue]
-    );
-    const historyTasks = useMemo(
-        () => downloadQueue
-            .filter(task => task.status === 'completed')
-            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
-        [downloadQueue]
-    );
+  const { downloadQueue } = useAppStore();
+  const { clearCompleted, deleteCompletedFiles } = useIPC();
+  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const activeTabRef = useRef<HTMLButtonElement>(null);
+  const historyTabRef = useRef<HTMLButtonElement>(null);
 
-    if (downloadQueue.length === 0) {
-        return (
-            <div className="w-full p-8 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
-                <Download className="w-12 h-12 mb-2" />
-                <p className="text-sm">No downloads in queue</p>
-                <p className="text-xs">Start a download to see it here</p>
-            </div>
-        );
-    }
+  const activeTasks = useMemo(
+    () => downloadQueue.filter(task => task.status !== 'completed'),
+    [downloadQueue]
+  );
+  const historyTasks = useMemo(
+    () => downloadQueue
+      .filter(task => task.status === 'completed')
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [downloadQueue]
+  );
 
-    const visibleTasks = activeTab === 'active' ? activeTasks : historyTasks;
+  const downloadingCount = activeTasks.filter(task => task.status === 'downloading').length;
+  const queuedCount = activeTasks.filter(task => task.status === 'pending').length;
+  const summaryParts = [
+    downloadingCount > 0 ? `${downloadingCount} downloading` : '',
+    queuedCount > 0 ? `${queuedCount} queued` : '',
+  ].filter(Boolean);
+  const queueSummary = summaryParts.length > 0
+    ? summaryParts.join(' · ')
+    : activeTasks.length > 0
+      ? `${activeTasks.length} in queue`
+      : 'Nothing in progress';
 
-    const handleClearHistory = async () => {
-        await clearCompleted();
-    };
+  const visibleTasks = activeTab === 'active' ? activeTasks : historyTasks;
 
-    const handleDeleteFiles = async () => {
-        await deleteCompletedFiles();
-        setShowDeleteConfirm(false);
-    };
+  const handleClearHistory = async () => {
+    await clearCompleted();
+  };
 
-    return (
-        <div className="w-full space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
-                <div className="inline-flex p-1 bg-gray-100 dark:bg-gray-800 rounded-lg self-start">
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab('active')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'active'
-                            ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                            : 'text-gray-600 dark:text-gray-400'
-                            }`}
-                    >
-                        <Download className="w-4 h-4" />
-                        Active ({activeTasks.length})
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab('history')}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'history'
-                            ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                            : 'text-gray-600 dark:text-gray-400'
-                            }`}
-                    >
-                        <History className="w-4 h-4" />
-                        History ({historyTasks.length})
-                    </button>
-                </div>
+  const handleDeleteFiles = async () => {
+    await deleteCompletedFiles();
+    setShowDeleteConfirm(false);
+  };
 
-                {activeTab === 'history' && historyTasks.length > 0 && (
-                    <div className="flex gap-2 self-start">
-                        <button
-                            type="button"
-                            onClick={() => setShowDeleteConfirm(true)}
-                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                            title="Permanently delete downloaded files AND clear history"
-                        >
-                            <Trash2 className="w-4 h-4" />
-                            Delete files
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleClearHistory}
-                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                            title="Clear history records (keeps downloaded files)"
-                        >
-                            <History className="w-4 h-4" />
-                            Clear history
-                        </button>
-                    </div>
-                )}
-            </div>
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 
-            {/* Delete files confirmation dialog */}
-            {showDeleteConfirm && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full">
-                                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
-                            </div>
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                                Delete downloaded files?
-                            </h3>
-                        </div>
-                        <p className="text-gray-600 dark:text-gray-300 mb-6">
-                            This will permanently delete <strong>{historyTasks.length} downloaded file(s)</strong> from your disk
-                            and remove them from history. This action cannot be undone.
-                        </p>
-                        <div className="flex gap-3 justify-end">
-                            <button
-                                onClick={() => setShowDeleteConfirm(false)}
-                                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleDeleteFiles}
-                                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
-                            >
-                                Delete files
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+    event.preventDefault();
+    const nextTab = activeTab === 'active' ? 'history' : 'active';
+    setActiveTab(nextTab);
+    (nextTab === 'active' ? activeTabRef : historyTabRef).current?.focus();
+  };
 
-            {visibleTasks.length === 0 ? (
-                <div className="w-full p-6 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg text-center text-gray-400 dark:text-gray-500">
-                    <p className="text-sm">
-                        {activeTab === 'active' ? 'No active downloads' : 'No completed downloads yet'}
-                    </p>
-                </div>
-            ) : (
-                <div className="space-y-2">
-                    {visibleTasks.map(task => (
-                        <DownloadItem key={task.id} task={task} />
-                    ))}
-                </div>
-            )}
+  const emptyTitle = downloadQueue.length === 0
+    ? 'Queue is empty'
+    : activeTab === 'active'
+      ? 'No active downloads'
+      : 'No completed downloads';
+  const emptyMessage = downloadQueue.length === 0
+    ? 'Downloads you start will appear here.'
+    : activeTab === 'active'
+      ? 'Completed items are available in History.'
+      : 'Finished downloads will be listed here.';
+
+  return (
+    <section
+      className="panel flex flex-col overflow-hidden min-[860px]:h-[calc(100vh-6.25rem)]"
+      aria-labelledby="queue-title"
+    >
+      <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-4">
+        <div className="min-w-0">
+          <h2 id="queue-title" className="text-[13px] font-semibold leading-5 text-ink">
+            Queue
+          </h2>
+          <p className="mt-0.5 text-[11px] text-muted">{queueSummary}</p>
         </div>
-    );
+      </div>
+
+      <div
+        className="flex items-center gap-5 border-b border-border px-4"
+        role="tablist"
+        aria-label="Queue views"
+      >
+        <button
+          ref={activeTabRef}
+          id="queue-active-tab"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'active'}
+          aria-controls="queue-panel"
+          tabIndex={activeTab === 'active' ? 0 : -1}
+          onClick={() => setActiveTab('active')}
+          onKeyDown={handleTabKeyDown}
+          className={`-mb-px flex h-9 items-center gap-1.5 border-b-2 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-surface ${
+            activeTab === 'active'
+              ? 'border-accent text-ink'
+              : 'border-transparent text-muted hover:text-ink'
+          }`}
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          Active
+          <span className="tabular-nums text-[10px] text-faint">{activeTasks.length}</span>
+        </button>
+
+        <button
+          ref={historyTabRef}
+          id="queue-history-tab"
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'history'}
+          aria-controls="queue-panel"
+          tabIndex={activeTab === 'history' ? 0 : -1}
+          onClick={() => setActiveTab('history')}
+          onKeyDown={handleTabKeyDown}
+          className={`-mb-px flex h-9 items-center gap-1.5 border-b-2 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-surface ${
+            activeTab === 'history'
+              ? 'border-accent text-ink'
+              : 'border-transparent text-muted hover:text-ink'
+          }`}
+        >
+          <History className="h-3.5 w-3.5" aria-hidden="true" />
+          History
+          <span className="tabular-nums text-[10px] text-faint">{historyTasks.length}</span>
+        </button>
+      </div>
+
+      {activeTab === 'history' && historyTasks.length > 0 && (
+        <div className="flex items-center justify-end gap-1 border-b border-border bg-surface-2/40 px-2 py-1.5">
+          <button
+            type="button"
+            onClick={() => void handleClearHistory()}
+            className="btn btn-ghost h-7 px-2 text-[11px]"
+            title="Clear history records (keeps downloaded files)"
+          >
+            <History className="h-3 w-3" aria-hidden="true" />
+            Clear history
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirm(true)}
+            className="btn btn-ghost-danger h-7 px-2 text-[11px]"
+            title="Permanently delete downloaded files and clear history"
+            aria-haspopup="dialog"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden="true" />
+            Delete files
+          </button>
+        </div>
+      )}
+
+      <div
+        id="queue-panel"
+        role="tabpanel"
+        aria-labelledby={activeTab === 'active' ? 'queue-active-tab' : 'queue-history-tab'}
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-thin"
+      >
+        {visibleTasks.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center px-5 py-10 text-center">
+            <Inbox className="h-5 w-5 text-faint" aria-hidden="true" />
+            <p className="mt-2 text-[12px] font-medium text-ink">{emptyTitle}</p>
+            <p className="mt-0.5 max-w-[230px] text-[11px] leading-5 text-muted">
+              {emptyMessage}
+            </p>
+          </div>
+        ) : (
+          <div role="list" className="divide-y divide-border">
+            {visibleTasks.map(task => (
+              <div role="listitem" key={task.id}>
+                <DownloadItem task={task} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Modal
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete downloaded files?"
+        description="This action cannot be undone."
+        icon={<AlertTriangle className="h-5 w-5 text-danger" aria-hidden="true" />}
+        size="sm"
+        footer={(
+          <>
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(false)}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDeleteFiles()}
+              className="btn btn-danger"
+            >
+              Delete files
+            </button>
+          </>
+        )}
+      >
+        <p className="text-[13px] leading-5 text-muted">
+          This permanently deletes{' '}
+          <strong className="font-semibold text-ink">
+            {historyTasks.length} downloaded {historyTasks.length === 1 ? 'file' : 'files'}
+          </strong>{' '}
+          from disk and removes {historyTasks.length === 1 ? 'it' : 'them'} from history.
+        </p>
+      </Modal>
+    </section>
+  );
 };

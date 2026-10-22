@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, RefreshCw, RotateCcw } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Download,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+} from 'lucide-react';
 import type { AppUpdateResponse, AppUpdateStatus } from '../types/app-update';
 
 export const AppUpdate: React.FC = () => {
@@ -9,11 +16,18 @@ export const AppUpdate: React.FC = () => {
   useEffect(() => {
     let mounted = true;
 
-    window.electronAPI.getUpdateStatus().then((response) => {
-      if (mounted) {
-        setStatus(response.data);
-      }
-    });
+    window.electronAPI.getUpdateStatus()
+      .then((response) => {
+        if (mounted) setStatus(response.data);
+      })
+      .catch((error: unknown) => {
+        if (!mounted) return;
+        setStatus({
+          state: 'error',
+          currentVersion: 'unknown',
+          error: error instanceof Error ? error.message : 'Unable to read update status.',
+        });
+      });
 
     const unsubscribe = window.electronAPI.onUpdateStatus((nextStatus) => {
       setStatus(nextStatus);
@@ -35,7 +49,7 @@ export const AppUpdate: React.FC = () => {
       setStatus((current) => ({
         state: 'error',
         currentVersion: current?.currentVersion || 'unknown',
-        error: error instanceof Error ? error.message : 'Update action failed.'
+        error: error instanceof Error ? error.message : 'Update action failed.',
       }));
     } finally {
       setIsWorking(false);
@@ -65,32 +79,42 @@ export const AppUpdate: React.FC = () => {
     }
   })();
 
+  const isBusyState = status?.state === 'checking' || status?.state === 'downloading';
+
   return (
-    <div className="border-t border-gray-200 dark:border-gray-700 pt-4 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Application Updates
-          </p>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Current version: {status?.currentVersion || '…'}
+        <div className="min-w-0">
+          <h3 className="text-[13px] font-semibold text-ink">Application updates</h3>
+          <p className="mt-0.5 text-[11px] text-faint">
+            Installed version {status?.currentVersion || '…'}
           </p>
         </div>
 
+        {isBusyState && (
+          <Loader2
+            className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-accent motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+        )}
         {(status?.state === 'up-to-date' || status?.state === 'downloaded') && (
-          <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />
         )}
         {status?.state === 'error' && (
-          <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
         )}
       </div>
 
-      <p className={`text-xs ${status?.error ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
+      <p
+        className={`break-words text-[11px] leading-5 ${
+          status?.state === 'error' ? 'text-danger' : 'text-muted'
+        }`}
+      >
         {message}
       </p>
 
       {status?.state === 'available' && status.releaseNotes && (
-        <div className="max-h-28 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-50 dark:bg-gray-900 p-3 text-xs text-gray-600 dark:text-gray-300">
+        <div className="max-h-28 overflow-y-auto scrollbar-thin whitespace-pre-wrap break-words rounded-md bg-surface-2 px-3 py-2.5 text-[11px] leading-5 text-muted">
           {status.releaseNotes}
         </div>
       )}
@@ -98,33 +122,39 @@ export const AppUpdate: React.FC = () => {
       <div className="flex flex-wrap gap-2">
         {(status?.state === 'idle' || status?.state === 'up-to-date' || status?.state === 'error') && (
           <button
-            onClick={() => runAction(window.electronAPI.checkForAppUpdate)}
+            type="button"
+            onClick={() => void runAction(window.electronAPI.checkForAppUpdate)}
             disabled={isWorking}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+            className="btn btn-secondary h-8 px-3 text-[11px]"
           >
-            <RefreshCw className={`w-4 h-4 ${isWorking ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${isWorking ? 'animate-spin motion-reduce:animate-none' : ''}`}
+              aria-hidden="true"
+            />
             Check for updates
           </button>
         )}
 
         {status?.state === 'available' && (
           <button
-            onClick={() => runAction(window.electronAPI.downloadAppUpdate)}
+            type="button"
+            onClick={() => void runAction(window.electronAPI.downloadAppUpdate)}
             disabled={isWorking}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:opacity-50"
+            className="btn btn-primary h-8 px-3 text-[11px]"
           >
-            <Download className="w-4 h-4" />
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Download update
           </button>
         )}
 
         {status?.state === 'downloaded' && (
           <button
-            onClick={() => runAction(window.electronAPI.installAppUpdate)}
+            type="button"
+            onClick={() => void runAction(window.electronAPI.installAppUpdate)}
             disabled={isWorking}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50"
+            className="btn btn-primary h-8 px-3 text-[11px]"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
             Restart &amp; install
           </button>
         )}
