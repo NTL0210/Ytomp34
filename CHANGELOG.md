@@ -5,6 +5,37 @@ All notable changes to Ytomp34 will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-10-22
+
+### Fixed
+- Download the highest resolution actually offered by the source instead of
+  silently falling back to a lower pre-merged MP4 stream
+- Build quality choices from yt-dlp's structured format metadata, including
+  separate video-only and audio-only streams
+- Select the correct tier for portrait videos and sources that only offer
+  specific resolutions such as 720p
+- Preserve high-resolution AV1/VP9 video by merging into MKV when the codecs
+  cannot be stored in MP4, while still preferring MP4 when compatible
+- Report the real output resolution and container, verified with the bundled
+  ffprobe, instead of claiming the requested quality was downloaded
+- Explain every fallback (pre-merged format, MP4-compatible streams, or missing
+  ffmpeg) in the completed download details
+- Warn when the requested quality is unavailable and show the resolution that
+  was actually saved
+
+### Changed
+- Quality tiers in the format selector are now derived from the formats the
+  source provides rather than a fixed list
+- Completed downloads display actual resolution, container, fallback notes,
+  and verification status
+
+### Tests
+- Added coverage for 1080p, 1440p, and 2160p selection, progressive versus
+  separate streams, duplicate tiers, portrait video, 720p-only sources,
+  fallback ordering, ffprobe inspection, output-path resolution, completion
+  metadata, and MP3 fallback
+- Full suite passes: 19 suites, 138 tests
+
 ## [1.2.1] - 2026-08-05
 
 ### Added
